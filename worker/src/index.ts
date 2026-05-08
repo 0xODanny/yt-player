@@ -9,38 +9,19 @@ import { jobsRouter } from "./routes/jobs";
 const app = express();
 const port = Number(process.env.PORT || 3001);
 
+const corsOptions: cors.CorsOptions = {
+  origin: process.env.ALLOWED_ORIGIN?.trim() || "http://localhost:3002",
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: false,
+};
+
 app.use(express.json());
-app.use(
-  cors({
-    origin(origin, callback) {
-      const allowedOrigin = process.env.ALLOWED_ORIGIN?.trim();
-
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
-
-      if (allowedOrigin && origin === allowedOrigin) {
-        callback(null, true);
-        return;
-      }
-
-      callback(new Error("CORS origin denied."));
-    },
-  }),
-);
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 app.use("/health", healthRouter);
 app.use("/jobs", jobsRouter);
-
-app.use((error: Error, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
-  if (error.message === "CORS origin denied.") {
-    response.status(403).json({ error: error.message });
-    return;
-  }
-
-  response.status(500).json({ error: "Internal server error." });
-});
 
 app.listen(port, () => {
   console.log(`yt-worker listening on port ${port}`);
