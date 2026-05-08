@@ -183,7 +183,7 @@ export default function HomePage() {
             <button type="submit" disabled={isSubmitting}>
               {isSubmitting ? "Queueing..." : "Start"}
             </button>
-            <p className="helper-text">Jobs are queued locally and stored in memory only.</p>
+            <p className="helper-text">Jobs use deterministic local mock progress for polling.</p>
           </div>
         </form>
       </section>

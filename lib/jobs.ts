@@ -9,32 +9,52 @@ export type JobRecord = JobInput & {
   message: "Job created";
 };
 
-type StoredJobRecord = JobRecord & {
-  createdAt: number;
-};
-
-const fakeJobStore = new Map<string, StoredJobRecord>();
-
-const QUEUED_WINDOW_MS = 3_000;
-const PROCESSING_WINDOW_MS = 9_000;
-const MOCK_DOWNLOAD_URL = "/downloads/mock-output.txt";
+const QUEUED_WINDOW_MS = 2_000;
+const PROCESSING_WINDOW_MS = 5_000;
+const TOTAL_DURATION_MS = QUEUED_WINDOW_MS + PROCESSING_WINDOW_MS;
+const MOCK_DOWNLOAD_URL = "/mock-output.txt";
+const JOB_ID_PREFIX = "job";
 
 function clampProgress(value: number) {
   return Math.max(0, Math.min(100, value));
 }
 
-function buildQueuedStatus(id: string): JobStatusResponse {
+function createFakeJobId(createdAt: number) {
+  return `${JOB_ID_PREFIX}_${createdAt}_${randomUUID().slice(0, 8)}`;
+}
+
+function getCreatedAtFromJobId(id: string) {
+  const match = new RegExp(`^${JOB_ID_PREFIX}_(\\d+)_`).exec(id);
+
+  if (!match) {
+    return null;
+  }
+
+  const createdAt = Number(match[1]);
+
+  if (!Number.isFinite(createdAt)) {
+    return null;
+  }
+
+  return createdAt;
+}
+
+function buildQueuedStatus(id: string, elapsedMs: number): JobStatusResponse {
+  const progress = clampProgress(
+    Math.floor((elapsedMs / QUEUED_WINDOW_MS) * 20),
+  );
+
   return {
     id,
     status: "queued",
-    progress: 8,
+    progress,
     message: "Job queued locally.",
   };
 }
 
 function buildProcessingStatus(id: string, elapsedMs: number): JobStatusResponse {
   const processingProgress = clampProgress(
-    20 + Math.floor((elapsedMs / PROCESSING_WINDOW_MS) * 70),
+    21 + Math.floor((elapsedMs / PROCESSING_WINDOW_MS) * 78),
   );
 
   return {
@@ -56,24 +76,24 @@ function buildCompleteStatus(id: string): JobStatusResponse {
 }
 
 export function getFakeJobStatus(id: string): JobStatusResponse {
-  const job = fakeJobStore.get(id);
+  const createdAt = getCreatedAtFromJobId(id);
 
-  if (!job) {
+  if (!createdAt) {
     return {
       id,
-      status: "processing",
-      progress: 50,
-      message: "Mock job not found in memory. Returning placeholder progress.",
+      status: "failed",
+      progress: 0,
+      message: "Invalid mock job id.",
     };
   }
 
-  const elapsedMs = Date.now() - job.createdAt;
+  const elapsedMs = Math.max(0, Date.now() - createdAt);
 
   if (elapsedMs < QUEUED_WINDOW_MS) {
-    return buildQueuedStatus(id);
+    return buildQueuedStatus(id, elapsedMs);
   }
 
-  if (elapsedMs < QUEUED_WINDOW_MS + PROCESSING_WINDOW_MS) {
+  if (elapsedMs < TOTAL_DURATION_MS) {
     return buildProcessingStatus(id, elapsedMs - QUEUED_WINDOW_MS);
   }
 
@@ -81,23 +101,13 @@ export function getFakeJobStatus(id: string): JobStatusResponse {
 }
 
 export function createFakeJob(input: JobInput): JobRecord {
-  const id = randomUUID();
-  const job: StoredJobRecord = {
+  const createdAt = Date.now();
+  const id = createFakeJobId(createdAt);
+
+  return {
     id,
     status: "queued",
     message: "Job created",
-    createdAt: Date.now(),
     ...input,
-  };
-
-  fakeJobStore.set(id, job);
-
-  return {
-    id: job.id,
-    status: job.status,
-    message: job.message,
-    url: job.url,
-    format: job.format,
-    quality: job.quality,
   };
 }
