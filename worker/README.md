@@ -38,6 +38,12 @@ Run the compiled server:
 npm run start
 ```
 
+Run under PM2 in production:
+
+```bash
+npm run start:prod
+```
+
 ## Environment Variables
 
 - `PORT`
@@ -48,6 +54,43 @@ npm run start
   Exact allowed browser origin for CORS.
 
 Copy `.env.example` to `.env` or supply these values through your deployment platform.
+
+`dotenv` is loaded by the server entrypoint in both local and production runs.
+
+## Ubuntu Deployment
+
+Example setup for a DigitalOcean Ubuntu droplet:
+
+Install Node.js:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+
+Install project dependencies:
+
+```bash
+npm install
+```
+
+Build the worker:
+
+```bash
+npm run build
+```
+
+Start with PM2:
+
+```bash
+npx pm2 start dist/index.js --name yt-worker --update-env
+```
+
+Optional PM2 process list:
+
+```bash
+npx pm2 status
+```
 
 ## Endpoints
 

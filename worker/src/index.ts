@@ -1,10 +1,12 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
 
 import cors from "cors";
 import express from "express";
 
 import { healthRouter } from "./routes/health";
 import { jobsRouter } from "./routes/jobs";
+
+loadEnv();
 
 const app = express();
 const port = Number(process.env.PORT || 3001);
@@ -24,5 +26,8 @@ app.use("/health", healthRouter);
 app.use("/jobs", jobsRouter);
 
 app.listen(port, () => {
-  console.log(`yt-worker listening on port ${port}`);
+  console.log("yt-worker startup");
+  console.log(`port: ${port}`);
+  console.log(`allowed origin: ${String(corsOptions.origin)}`);
+  console.log(`worker api secret configured: ${Boolean(process.env.WORKER_API_SECRET?.trim())}`);
 });
