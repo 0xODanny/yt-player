@@ -4,3 +4,4 @@ downloads/*
 !downloads/.gitkeep
 .env.local
 npm-debug.log*
+worker/dist
