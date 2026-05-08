@@ -1,0 +1,235 @@
+:root {
+  color-scheme: dark;
+  --bg: #0a0f17;
+  --panel: rgba(15, 23, 35, 0.92);
+  --panel-border: rgba(125, 144, 170, 0.18);
+  --panel-strong: #131d2b;
+  --text: #edf2ff;
+  --muted: #98a7c2;
+  --accent: #61dafb;
+  --accent-strong: #2ea3c7;
+  --danger: #ff7878;
+  --success: #7ed9a1;
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top, rgba(97, 218, 251, 0.14), transparent 30%),
+    linear-gradient(180deg, #06090f 0%, var(--bg) 100%);
+  color: var(--text);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+body {
+  min-height: 100vh;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.shell {
+  width: min(960px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 48px 0 72px;
+  display: grid;
+  gap: 20px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  padding: 24px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: var(--accent);
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.hero h1,
+.section-heading h2 {
+  margin: 0;
+}
+
+.hero-copy,
+.hero-note,
+.helper-text,
+.status-card p,
+.result-placeholder p,
+.section-heading span {
+  color: var(--muted);
+}
+
+.hero-copy {
+  max-width: 58ch;
+  margin: 12px 0 0;
+  line-height: 1.6;
+}
+
+.hero-note {
+  margin: 12px 0 0;
+  font-size: 0.95rem;
+}
+
+.hero-badge {
+  white-space: nowrap;
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: rgba(97, 218, 251, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(97, 218, 251, 0.2);
+}
+
+.job-form {
+  display: grid;
+  gap: 18px;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.field span {
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  border: 1px solid rgba(152, 167, 194, 0.18);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--panel-strong);
+  color: var(--text);
+  outline: none;
+}
+
+.field input:focus,
+.field select:focus {
+  border-color: rgba(97, 218, 251, 0.55);
+  box-shadow: 0 0 0 3px rgba(97, 218, 251, 0.12);
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.actions button {
+  border: 0;
+  border-radius: 12px;
+  padding: 14px 22px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  color: #05111a;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.actions button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.download-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  border-radius: 12px;
+  padding: 12px 18px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  color: #05111a;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.status-card,
+.result-placeholder {
+  border-radius: 16px;
+  padding: 18px;
+  background: rgba(7, 11, 18, 0.8);
+  border: 1px solid rgba(152, 167, 194, 0.14);
+}
+
+.status-card strong,
+.result-placeholder p:first-child {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.status-card.error {
+  border-color: rgba(255, 120, 120, 0.35);
+}
+
+.status-card.error strong {
+  color: var(--danger);
+}
+
+.status-card.success {
+  border-color: rgba(126, 217, 161, 0.35);
+}
+
+.status-card.success strong {
+  color: var(--success);
+}
+
+@media (max-width: 720px) {
+  .shell {
+    width: min(100% - 24px, 960px);
+    padding-top: 24px;
+  }
+
+  .hero,
+  .section-heading,
+  .field-grid {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .hero-badge {
+    justify-self: start;
+  }
+}

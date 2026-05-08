@@ -1,0 +1,6 @@
+.next
+node_modules
+downloads/*
+!downloads/.gitkeep
+.env.local
+npm-debug.log*

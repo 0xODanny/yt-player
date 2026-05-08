@@ -1,0 +1,3 @@
+YT Local Tool placeholder output.
+
+This is a fake local download artifact used for Phase 4 polling UI only.
