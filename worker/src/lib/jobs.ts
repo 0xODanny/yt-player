@@ -22,9 +22,11 @@ const YT_DLP_BINARY = process.env.YT_DLP_BINARY?.trim() || "yt-dlp";
 type StoredJobMetadata = {
   metadata: JobMetadata;
   storedAt: number;
+  message?: string;
 };
 
 const jobMetadataStore = new Map<string, StoredJobMetadata>();
+const BASIC_METADATA_MESSAGE = "Detailed media formats are unavailable, but basic metadata was loaded.";
 
 class MetadataExtractionError extends Error {
   constructor(
@@ -39,12 +41,13 @@ class MetadataExtractionError extends Error {
 export async function createFakeWorkerJob(payload: JobPayload): Promise<JobCreateResponse> {
   const createdAt = Date.now();
   const id = createJobId(createdAt);
-  const metadata = await extractJobMetadata(payload.url);
+  const extractionResult = await extractJobMetadata(payload.url);
 
   pruneExpiredMetadata(createdAt);
   jobMetadataStore.set(id, {
-    metadata,
+    metadata: extractionResult.metadata,
     storedAt: createdAt,
+    message: extractionResult.message,
   });
 
   return {
@@ -58,13 +61,14 @@ export async function createFakeWorkerJob(payload: JobPayload): Promise<JobCreat
 export function getFakeWorkerJobStatus(jobId: string): JobStatusResponse {
   const createdAt = getCreatedAtFromJobId(jobId);
   const metadata = getStoredMetadata(jobId);
+  const messageOverride = getStoredMessage(jobId);
 
   if (!createdAt) {
     return {
       id: jobId,
       status: "failed",
       progress: 0,
-      message: "Invalid worker job id.",
+      message: messageOverride ?? "Invalid worker job id.",
       metadata,
     };
   }
@@ -76,7 +80,7 @@ export function getFakeWorkerJobStatus(jobId: string): JobStatusResponse {
       id: jobId,
       status: "queued",
       progress: clampProgress(Math.floor((elapsedMs / QUEUED_WINDOW_MS) * 20)),
-      message: "Worker job queued.",
+      message: messageOverride ?? "Worker job queued.",
       metadata,
     };
   }
@@ -88,7 +92,7 @@ export function getFakeWorkerJobStatus(jobId: string): JobStatusResponse {
       progress: clampProgress(
         21 + Math.floor(((elapsedMs - QUEUED_WINDOW_MS) / PROCESSING_WINDOW_MS) * 78),
       ),
-      message: "Worker job processing.",
+      message: messageOverride ?? "Worker job processing.",
       metadata,
     };
   }
@@ -97,7 +101,7 @@ export function getFakeWorkerJobStatus(jobId: string): JobStatusResponse {
     id: jobId,
     status: "complete",
     progress: 100,
-    message: "Worker job complete.",
+    message: messageOverride ?? "Worker job complete.",
     metadata,
     downloadUrl: MOCK_DOWNLOAD_URL,
   };
@@ -124,6 +128,16 @@ export function normalizeMediaSourceUrl(url: string) {
     parsedUrl.pathname === "/watch"
   ) {
     const videoId = parsedUrl.searchParams.get("v");
+
+    if (!videoId) {
+      throw new MetadataExtractionError("Unable to extract metadata for this video", 400);
+    }
+
+    return `https://www.youtube.com/watch?v=${videoId}`;
+  }
+
+  if (parsedUrl.hostname === "youtu.be") {
+    const videoId = parsedUrl.pathname.replace(/^\//, "");
 
     if (!videoId) {
       throw new MetadataExtractionError("Unable to extract metadata for this video", 400);
@@ -171,6 +185,10 @@ function getStoredMetadata(jobId: string): JobMetadata {
   };
 }
 
+function getStoredMessage(jobId: string) {
+  return jobMetadataStore.get(jobId)?.message;
+}
+
 function pruneExpiredMetadata(now: number) {
   for (const [jobId, record] of jobMetadataStore.entries()) {
     if (now - record.storedAt > METADATA_RETENTION_MS) {
@@ -179,7 +197,10 @@ function pruneExpiredMetadata(now: number) {
   }
 }
 
-async function extractJobMetadata(url: string): Promise<JobMetadata> {
+async function extractJobMetadata(url: string): Promise<{
+  metadata: JobMetadata;
+  message?: string;
+}> {
   const normalizedUrl = normalizeMediaSourceUrl(url);
 
   try {
@@ -196,28 +217,32 @@ async function extractJobMetadata(url: string): Promise<JobMetadata> {
     }
 
     return {
-      title: info.title || "Unknown media",
-      duration: Number.isFinite(Number(info.duration))
-        ? Number(info.duration)
-        : null,
-      formats: (info.formats ?? []).map((format) => ({
-        itag: Number.isFinite(Number(format.format_id)) ? Number(format.format_id) : 0,
-        container: format.ext ?? "unknown",
-        quality: format.format_note ?? format.resolution ?? format.format ?? "unknown",
-        hasAudio: format.acodec !== "none",
-        hasVideo: format.vcodec !== "none",
-      })),
-      thumbnail: info.thumbnail,
+      metadata: {
+        title: info.title || "Unknown media",
+        duration: Number.isFinite(Number(info.duration))
+          ? Number(info.duration)
+          : null,
+        formats: (info.formats ?? []).map((format) => ({
+          itag: Number.isFinite(Number(format.format_id)) ? Number(format.format_id) : 0,
+          container: format.ext ?? "unknown",
+          quality: format.format_note ?? format.resolution ?? format.format ?? "unknown",
+          hasAudio: format.acodec !== "none",
+          hasVideo: format.vcodec !== "none",
+        })),
+        thumbnail: info.thumbnail,
+      },
     };
   } catch (error) {
     if (error instanceof MetadataExtractionError) {
       throw error;
     }
 
-    throw new MetadataExtractionError(
-      "Unable to extract metadata for this video",
-      502,
-    );
+    const fallbackMetadata = await extractOEmbedMetadata(normalizedUrl);
+
+    return {
+      metadata: fallbackMetadata,
+      message: BASIC_METADATA_MESSAGE,
+    };
   }
 }
 
@@ -242,3 +267,42 @@ type YtDlpVideoInfo = {
   formats?: YtDlpVideoFormat[];
   entries?: unknown[];
 };
+
+type YouTubeOEmbedResponse = {
+  title?: string;
+  author_name?: string;
+  thumbnail_url?: string;
+};
+
+async function extractOEmbedMetadata(normalizedUrl: string): Promise<JobMetadata> {
+  try {
+    const requestUrl = new URL("https://www.youtube.com/oembed");
+    requestUrl.searchParams.set("url", normalizedUrl);
+    requestUrl.searchParams.set("format", "json");
+
+    const response = await fetch(requestUrl, {
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error("oEmbed request failed");
+    }
+
+    const data = (await response.json()) as YouTubeOEmbedResponse;
+
+    return {
+      title: data.title || "Unknown media",
+      duration: null,
+      formats: [],
+      author: data.author_name,
+      thumbnail: data.thumbnail_url,
+    };
+  } catch {
+    throw new MetadataExtractionError(
+      "Unable to extract metadata for this video",
+      502,
+    );
+  }
+}

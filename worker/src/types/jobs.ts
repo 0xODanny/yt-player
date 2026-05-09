@@ -22,6 +22,7 @@ export type JobMetadata = {
   title: string;
   duration: number | null;
   formats: JobMetadataFormat[];
+  author?: string;
   thumbnail?: string;
 };
 
