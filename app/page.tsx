@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useState } from "react";
 import {
   createJob,
   getJob,
+  type JobMetadata,
   type JobResponse,
   type JobStatusResponse,
 } from "@/lib/apiClient";
@@ -23,6 +24,40 @@ const qualityOptions: Array<{ value: QualityOption; label: string }> = [
   { value: "720p", label: "720p" },
   { value: "audio-only", label: "Audio Only" },
 ];
+
+function formatDuration(duration: number | null | undefined) {
+  if (!duration || duration < 1) {
+    return null;
+  }
+
+  const hours = Math.floor(duration / 3600);
+  const minutes = Math.floor((duration % 3600) / 60);
+  const seconds = duration % 60;
+
+  if (hours > 0) {
+    return [hours, minutes, seconds]
+      .map((value, index) => (index === 0 ? String(value) : String(value).padStart(2, "0")))
+      .join(":");
+  }
+
+  return [minutes, seconds]
+    .map((value, index) => (index === 0 ? String(value) : String(value).padStart(2, "0")))
+    .join(":");
+}
+
+function hasVisibleMetadata(metadata: JobMetadata | undefined) {
+  if (!metadata) {
+    return false;
+  }
+
+  return Boolean(
+    metadata.thumbnail ||
+      metadata.title ||
+      metadata.author ||
+      metadata.duration ||
+      metadata.formats?.length,
+  );
+}
 
 export default function HomePage() {
   const [url, setUrl] = useState("");
@@ -114,6 +149,10 @@ export default function HomePage() {
       setIsSubmitting(false);
     }
   }
+
+  const metadata = job?.metadata;
+  const metadataDuration = formatDuration(metadata?.duration);
+  const showMetadataCard = hasVisibleMetadata(metadata);
 
   return (
     <main className="shell">
@@ -213,6 +252,32 @@ export default function HomePage() {
           </div>
         )}
       </section>
+
+      {showMetadataCard ? (
+        <section className="panel metadata-panel">
+          <div className="section-heading">
+            <h2>Metadata</h2>
+            <span>Worker preview</span>
+          </div>
+          <article className="metadata-card">
+            {metadata?.thumbnail ? (
+              <div className="metadata-thumb-wrap">
+                <img
+                  className="metadata-thumb"
+                  src={metadata.thumbnail}
+                  alt={metadata.title ? `${metadata.title} thumbnail` : "Video thumbnail"}
+                />
+              </div>
+            ) : null}
+
+            <div className="metadata-copy">
+              {metadata?.title ? <h3>{metadata.title}</h3> : null}
+              {metadata?.author ? <p className="metadata-meta">Channel: {metadata.author}</p> : null}
+              {metadataDuration ? <p className="metadata-meta">Duration: {metadataDuration}</p> : null}
+            </div>
+          </article>
+        </section>
+      ) : null}
 
       <section className="panel result-panel">
         <div className="section-heading">

@@ -178,6 +178,42 @@ select {
   text-decoration: none;
 }
 
+.metadata-card {
+  display: grid;
+  gap: 16px;
+}
+
+.metadata-thumb-wrap {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid rgba(152, 167, 194, 0.14);
+  background: rgba(7, 11, 18, 0.8);
+}
+
+.metadata-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+
+.metadata-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.metadata-copy h3 {
+  margin: 0;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.metadata-meta {
+  margin: 0;
+  color: var(--muted);
+}
+
 .section-heading {
   display: flex;
   justify-content: space-between;
@@ -231,5 +267,12 @@ select {
 
   .hero-badge {
     justify-self: start;
+  }
+}
+
+@media (min-width: 721px) {
+  .metadata-card {
+    grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+    align-items: start;
   }
 }
