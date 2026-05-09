@@ -10,7 +10,6 @@
     "start:prod": "pm2 start dist/index.js --name yt-worker --update-env"
   },
   "dependencies": {
-    "@distube/ytdl-core": "4.16.12",
     "cors": "2.8.5",
     "dotenv": "16.4.7",
     "express": "4.21.2",

@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
-import ytdl from "@distube/ytdl-core";
+import { execFile } from "child_process";
+import { promisify } from "util";
 
 import type {
   JobCreateResponse,
@@ -8,12 +9,15 @@ import type {
   JobStatusResponse,
 } from "../types/jobs";
 
+const execFileAsync = promisify(execFile);
+
 const JOB_ID_PREFIX = "job";
 const QUEUED_WINDOW_MS = 2_000;
 const PROCESSING_WINDOW_MS = 5_000;
 const TOTAL_DURATION_MS = QUEUED_WINDOW_MS + PROCESSING_WINDOW_MS;
 const MOCK_DOWNLOAD_URL = "/mock-output.txt";
 const METADATA_RETENTION_MS = 15 * 60 * 1_000;
+const YT_DLP_BINARY = process.env.YT_DLP_BINARY?.trim() || "yt-dlp";
 
 type StoredJobMetadata = {
   metadata: JobMetadata;
@@ -108,6 +112,29 @@ export function isValidMediaSourceUrl(url: string) {
   }
 }
 
+export function normalizeMediaSourceUrl(url: string) {
+  const parsedUrl = new URL(url);
+
+  if (isPlaylistUrl(parsedUrl)) {
+    throw new MetadataExtractionError("Playlists are not supported.", 400);
+  }
+
+  if (
+    (parsedUrl.hostname === "www.youtube.com" || parsedUrl.hostname === "youtube.com") &&
+    parsedUrl.pathname === "/watch"
+  ) {
+    const videoId = parsedUrl.searchParams.get("v");
+
+    if (!videoId) {
+      throw new MetadataExtractionError("Unable to extract metadata for this video", 400);
+    }
+
+    return `https://www.youtube.com/watch?v=${videoId}`;
+  }
+
+  return parsedUrl.toString();
+}
+
 export function isMetadataExtractionError(error: unknown): error is MetadataExtractionError {
   return error instanceof MetadataExtractionError;
 }
@@ -153,34 +180,65 @@ function pruneExpiredMetadata(now: number) {
 }
 
 async function extractJobMetadata(url: string): Promise<JobMetadata> {
-  if (!ytdl.validateURL(url)) {
-    throw new MetadataExtractionError(
-      "URL is not supported for metadata extraction.",
-      400,
-    );
-  }
+  const normalizedUrl = normalizeMediaSourceUrl(url);
 
   try {
-    const info = await ytdl.getInfo(url);
+    const { stdout } = await execFileAsync(YT_DLP_BINARY, [
+      "--dump-json",
+      "--no-playlist",
+      normalizedUrl,
+    ]);
+
+    const info = JSON.parse(stdout) as YtDlpVideoInfo;
+
+    if (Array.isArray(info.entries)) {
+      throw new MetadataExtractionError("Playlists are not supported.", 400);
+    }
 
     return {
-      title: info.videoDetails.title,
-      duration: Number.isFinite(Number(info.videoDetails.lengthSeconds))
-        ? Number(info.videoDetails.lengthSeconds)
+      title: info.title || "Unknown media",
+      duration: Number.isFinite(Number(info.duration))
+        ? Number(info.duration)
         : null,
-      formats: info.formats.map((format) => ({
-        itag: format.itag,
-        container: format.container ?? "unknown",
-        quality: format.qualityLabel ?? format.audioQuality ?? "unknown",
-        hasAudio: Boolean(format.hasAudio),
-        hasVideo: Boolean(format.hasVideo),
+      formats: (info.formats ?? []).map((format) => ({
+        itag: Number.isFinite(Number(format.format_id)) ? Number(format.format_id) : 0,
+        container: format.ext ?? "unknown",
+        quality: format.format_note ?? format.resolution ?? format.format ?? "unknown",
+        hasAudio: format.acodec !== "none",
+        hasVideo: format.vcodec !== "none",
       })),
-      thumbnail: info.videoDetails.thumbnails.at(-1)?.url,
+      thumbnail: info.thumbnail,
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof MetadataExtractionError) {
+      throw error;
+    }
+
     throw new MetadataExtractionError(
-      "Unable to extract media metadata for this URL.",
+      "Unable to extract metadata for this video",
       502,
     );
   }
 }
+
+function isPlaylistUrl(url: URL) {
+  return Boolean(url.searchParams.get("list")) || url.pathname === "/playlist";
+}
+
+type YtDlpVideoFormat = {
+  format_id?: string | number;
+  ext?: string;
+  format_note?: string;
+  resolution?: string;
+  format?: string;
+  acodec?: string;
+  vcodec?: string;
+};
+
+type YtDlpVideoInfo = {
+  title?: string;
+  duration?: number | string;
+  thumbnail?: string;
+  formats?: YtDlpVideoFormat[];
+  entries?: unknown[];
+};

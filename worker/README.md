@@ -68,6 +68,13 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 ```
 
+Install Python pip and yt-dlp:
+
+```bash
+sudo apt install -y python3-pip
+python3 -m pip install -U yt-dlp --break-system-packages
+```
+
 Install project dependencies:
 
 ```bash
