@@ -10,6 +10,21 @@ export type JobPayload = {
   quality: JobQuality;
 };
 
+export type JobMetadataFormat = {
+  itag: number;
+  container: string;
+  quality: string;
+  hasAudio: boolean;
+  hasVideo: boolean;
+};
+
+export type JobMetadata = {
+  title: string;
+  duration: number | null;
+  formats: JobMetadataFormat[];
+  thumbnail?: string;
+};
+
 export type JobCreateResponse = {
   id: string;
   status: "queued";
@@ -22,5 +37,6 @@ export type JobStatusResponse = {
   status: JobStatus;
   progress: number;
   message: string;
+  metadata: JobMetadata;
   downloadUrl?: string;
 };

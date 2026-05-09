@@ -1,7 +1,12 @@
 import { Router } from "express";
 
 import { requireWorkerAuth } from "../lib/auth";
-import { createFakeWorkerJob, getFakeWorkerJobStatus } from "../lib/jobs";
+import {
+  createFakeWorkerJob,
+  getFakeWorkerJobStatus,
+  isMetadataExtractionError,
+  isValidMediaSourceUrl,
+} from "../lib/jobs";
 import type { JobPayload } from "../types/jobs";
 
 const allowedFormats = new Set(["mp3", "mp4"]);
@@ -11,7 +16,7 @@ const jobsRouter = Router();
 
 jobsRouter.use(requireWorkerAuth);
 
-jobsRouter.post("/", (request, response) => {
+jobsRouter.post("/", async (request, response) => {
   const validation = validateJobPayload(request.body as Partial<JobPayload>);
 
   if (!validation.success) {
@@ -19,7 +24,17 @@ jobsRouter.post("/", (request, response) => {
     return;
   }
 
-  response.status(201).json(createFakeWorkerJob(validation.data));
+  try {
+    const job = await createFakeWorkerJob(validation.data);
+    response.status(201).json(job);
+  } catch (error) {
+    if (isMetadataExtractionError(error)) {
+      response.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+
+    response.status(500).json({ error: "Unexpected metadata extraction failure." });
+  }
 });
 
 jobsRouter.get("/:id", (request, response) => {
@@ -39,6 +54,13 @@ function validateJobPayload(payload: Partial<JobPayload>):
     return {
       success: false as const,
       error: "URL is required.",
+    };
+  }
+
+  if (!isValidMediaSourceUrl(url)) {
+    return {
+      success: false as const,
+      error: "URL must be a valid http or https address.",
     };
   }
 
