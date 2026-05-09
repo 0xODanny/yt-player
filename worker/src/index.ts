@@ -3,6 +3,8 @@ import { config as loadEnv } from "dotenv";
 import cors from "cors";
 import express from "express";
 
+import { startDownloadCleanupLoop } from "./lib/storage";
+import { filesRouter } from "./routes/files";
 import { healthRouter } from "./routes/health";
 import { jobsRouter } from "./routes/jobs";
 
@@ -23,7 +25,10 @@ app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
 app.use("/health", healthRouter);
+app.use("/files", filesRouter);
 app.use("/jobs", jobsRouter);
+
+startDownloadCleanupLoop();
 
 app.listen(port, () => {
   console.log("yt-worker startup");

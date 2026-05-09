@@ -37,8 +37,13 @@ jobsRouter.post("/", async (request, response) => {
   }
 });
 
-jobsRouter.get("/:id", (request, response) => {
-  response.json(getFakeWorkerJobStatus(request.params.id));
+jobsRouter.get("/:id", async (request, response) => {
+  const forwardedProto = request.header("x-forwarded-proto")?.split(",")[0]?.trim();
+  const protocol = forwardedProto || request.protocol;
+  const host = request.get("host") || `localhost:${process.env.PORT || 3001}`;
+  const baseUrl = `${protocol}://${host}`;
+
+  response.json(await getFakeWorkerJobStatus(request.params.id, baseUrl));
 });
 
 export { jobsRouter };

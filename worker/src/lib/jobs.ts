@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { execFile } from "child_process";
 import { promisify } from "util";
 
+import { cleanupExpiredDownloads, ensureDownloadsDir, ensurePlaceholderDownload } from "./storage";
 import type {
   JobCreateResponse,
   JobMetadata,
@@ -15,7 +16,6 @@ const JOB_ID_PREFIX = "job";
 const QUEUED_WINDOW_MS = 2_000;
 const PROCESSING_WINDOW_MS = 5_000;
 const TOTAL_DURATION_MS = QUEUED_WINDOW_MS + PROCESSING_WINDOW_MS;
-const MOCK_DOWNLOAD_URL = "/mock-output.txt";
 const METADATA_RETENTION_MS = 15 * 60 * 1_000;
 const YT_DLP_BINARY = process.env.YT_DLP_BINARY?.trim() || "yt-dlp";
 
@@ -43,6 +43,8 @@ export async function createFakeWorkerJob(payload: JobPayload): Promise<JobCreat
   const id = createJobId(createdAt);
   const extractionResult = await extractJobMetadata(payload.url);
 
+  await ensureDownloadsDir();
+  await cleanupExpiredDownloads(createdAt);
   pruneExpiredMetadata(createdAt);
   jobMetadataStore.set(id, {
     metadata: extractionResult.metadata,
@@ -58,7 +60,10 @@ export async function createFakeWorkerJob(payload: JobPayload): Promise<JobCreat
   };
 }
 
-export function getFakeWorkerJobStatus(jobId: string): JobStatusResponse {
+export async function getFakeWorkerJobStatus(
+  jobId: string,
+  baseUrl: string,
+): Promise<JobStatusResponse> {
   const createdAt = getCreatedAtFromJobId(jobId);
   const metadata = getStoredMetadata(jobId);
   const messageOverride = getStoredMessage(jobId);
@@ -73,6 +78,7 @@ export function getFakeWorkerJobStatus(jobId: string): JobStatusResponse {
     };
   }
 
+  await cleanupExpiredDownloads();
   const elapsedMs = Math.max(0, Date.now() - createdAt);
 
   if (elapsedMs < QUEUED_WINDOW_MS) {
@@ -97,14 +103,26 @@ export function getFakeWorkerJobStatus(jobId: string): JobStatusResponse {
     };
   }
 
-  return {
-    id: jobId,
-    status: "complete",
-    progress: 100,
-    message: messageOverride ?? "Worker job complete.",
-    metadata,
-    downloadUrl: MOCK_DOWNLOAD_URL,
-  };
+  try {
+    const filename = await ensurePlaceholderDownload(jobId, metadata);
+
+    return {
+      id: jobId,
+      status: "complete",
+      progress: 100,
+      message: messageOverride ?? "Worker job complete.",
+      metadata,
+      downloadUrl: new URL(`/files/${filename}`, baseUrl).toString(),
+    };
+  } catch {
+    return {
+      id: jobId,
+      status: "failed",
+      progress: 0,
+      message: "Unable to prepare placeholder download.",
+      metadata,
+    };
+  }
 }
 
 export function isValidMediaSourceUrl(url: string) {
