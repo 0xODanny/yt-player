@@ -4,6 +4,7 @@ import { requireWorkerAuth } from "../lib/auth";
 import {
   createFakeWorkerJob,
   getFakeWorkerJobStatus,
+  isDirectMediaFileUrl,
   isMetadataExtractionError,
   isValidMediaSourceUrl,
 } from "../lib/jobs";
@@ -80,6 +81,13 @@ function validateJobPayload(payload: Partial<JobPayload>):
     return {
       success: false as const,
       error: "Quality must be one of best, 1080p, 720p, or audio-only.",
+    };
+  }
+
+  if (isDirectMediaFileUrl(url) && format !== "mp3") {
+    return {
+      success: false as const,
+      error: "Direct media URL downloads currently support MP3 mode only.",
     };
   }
 

@@ -222,7 +222,7 @@ export default function HomePage() {
             <button type="submit" disabled={isSubmitting}>
               {isSubmitting ? "Queueing..." : "Start"}
             </button>
-            <p className="helper-text">Jobs use deterministic local mock progress for polling.</p>
+            <p className="helper-text">Direct file URLs can produce real downloads. Streaming sources remain preview-only.</p>
           </div>
         </form>
       </section>
@@ -287,10 +287,15 @@ export default function HomePage() {
         <div className="result-placeholder">
           {job?.status === "complete" && job.downloadUrl ? (
             <>
-              <p>Placeholder result is ready.</p>
+              <p>Download is ready.</p>
               <a className="download-link" href={job.downloadUrl} download>
-                Download placeholder file
+                Download file
               </a>
+            </>
+          ) : job?.status === "complete" ? (
+            <>
+              <p>Preview-only job complete.</p>
+              <p>No downloadable file is available for this source yet.</p>
             </>
           ) : (
             <>

@@ -1,11 +1,14 @@
 import { randomUUID } from "crypto";
 import { execFile } from "child_process";
+import { open, unlink } from "fs/promises";
+import path from "path";
 import { promisify } from "util";
 
-import { cleanupExpiredDownloads, ensureDownloadsDir, ensurePlaceholderDownload } from "./storage";
+import { cleanupExpiredDownloads, DOWNLOADS_DIR, ensureDownloadsDir } from "./storage";
 import type {
   JobCreateResponse,
   JobMetadata,
+  JobStatus,
   JobPayload,
   JobStatusResponse,
 } from "../types/jobs";
@@ -18,6 +21,14 @@ const PROCESSING_WINDOW_MS = 5_000;
 const TOTAL_DURATION_MS = QUEUED_WINDOW_MS + PROCESSING_WINDOW_MS;
 const METADATA_RETENTION_MS = 15 * 60 * 1_000;
 const YT_DLP_BINARY = process.env.YT_DLP_BINARY?.trim() || "yt-dlp";
+const SUPPORTED_DIRECT_MEDIA_EXTENSIONS = new Set([
+  ".mp4",
+  ".mov",
+  ".webm",
+  ".mp3",
+  ".wav",
+  ".m4a",
+]);
 
 type StoredJobMetadata = {
   metadata: JobMetadata;
@@ -25,7 +36,17 @@ type StoredJobMetadata = {
   message?: string;
 };
 
+type StoredDirectDownloadJob = {
+  createdAt: number;
+  status: JobStatus;
+  progress: number;
+  message: string;
+  metadata: JobMetadata;
+  filename?: string;
+};
+
 const jobMetadataStore = new Map<string, StoredJobMetadata>();
+const directDownloadJobStore = new Map<string, StoredDirectDownloadJob>();
 const BASIC_METADATA_MESSAGE = "Detailed media formats are unavailable, but basic metadata was loaded.";
 
 class MetadataExtractionError extends Error {
@@ -41,10 +62,44 @@ class MetadataExtractionError extends Error {
 export async function createFakeWorkerJob(payload: JobPayload): Promise<JobCreateResponse> {
   const createdAt = Date.now();
   const id = createJobId(createdAt);
-  const extractionResult = await extractJobMetadata(payload.url);
 
   await ensureDownloadsDir();
   await cleanupExpiredDownloads(createdAt);
+  pruneExpiredDirectJobs(createdAt);
+
+  if (isDirectMediaDownloadRequest(payload)) {
+    const normalizedUrl = normalizeDirectMediaUrl(payload.url);
+    const filename = buildDirectDownloadFilename(id, normalizedUrl);
+    const metadata = buildDirectMediaMetadata(normalizedUrl);
+
+    directDownloadJobStore.set(id, {
+      createdAt,
+      status: "queued",
+      progress: 0,
+      message: "Worker job queued.",
+      metadata,
+      filename,
+    });
+
+    void downloadDirectMediaJob(id, normalizedUrl, filename);
+
+    return {
+      id,
+      status: "queued",
+      progress: 0,
+      message: "Worker job accepted",
+    };
+  }
+
+  if (isDirectMediaFileUrl(payload.url) && payload.format !== "mp3") {
+    throw new MetadataExtractionError(
+      "Direct media downloads currently support MP3 requests only.",
+      400,
+    );
+  }
+
+  const extractionResult = await extractJobMetadata(payload.url);
+
   pruneExpiredMetadata(createdAt);
   jobMetadataStore.set(id, {
     metadata: extractionResult.metadata,
@@ -64,6 +119,24 @@ export async function getFakeWorkerJobStatus(
   jobId: string,
   baseUrl: string,
 ): Promise<JobStatusResponse> {
+  const directJob = directDownloadJobStore.get(jobId);
+
+  if (directJob) {
+    await cleanupExpiredDownloads();
+
+    return {
+      id: jobId,
+      status: directJob.status,
+      progress: directJob.progress,
+      message: directJob.message,
+      metadata: directJob.metadata,
+      downloadUrl:
+        directJob.status === "complete" && directJob.filename
+          ? new URL(`/files/${directJob.filename}`, baseUrl).toString()
+          : undefined,
+    };
+  }
+
   const createdAt = getCreatedAtFromJobId(jobId);
   const metadata = getStoredMetadata(jobId);
   const messageOverride = getStoredMessage(jobId);
@@ -103,32 +176,30 @@ export async function getFakeWorkerJobStatus(
     };
   }
 
-  try {
-    const filename = await ensurePlaceholderDownload(jobId, metadata);
-
-    return {
-      id: jobId,
-      status: "complete",
-      progress: 100,
-      message: messageOverride ?? "Worker job complete.",
-      metadata,
-      downloadUrl: new URL(`/files/${filename}`, baseUrl).toString(),
-    };
-  } catch {
-    return {
-      id: jobId,
-      status: "failed",
-      progress: 0,
-      message: "Unable to prepare placeholder download.",
-      metadata,
-    };
-  }
+  return {
+    id: jobId,
+    status: "complete",
+    progress: 100,
+    message: messageOverride ?? "Worker job complete.",
+    metadata,
+  };
 }
 
 export function isValidMediaSourceUrl(url: string) {
   try {
     const parsedUrl = new URL(url);
     return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export function isDirectMediaFileUrl(url: string) {
+  try {
+    const parsedUrl = new URL(url);
+    const extension = path.extname(parsedUrl.pathname).toLowerCase();
+
+    return SUPPORTED_DIRECT_MEDIA_EXTENSIONS.has(extension);
   } catch {
     return false;
   }
@@ -215,6 +286,145 @@ function pruneExpiredMetadata(now: number) {
   }
 }
 
+function pruneExpiredDirectJobs(now: number) {
+  for (const [jobId, record] of directDownloadJobStore.entries()) {
+    if (now - record.createdAt > METADATA_RETENTION_MS) {
+      directDownloadJobStore.delete(jobId);
+    }
+  }
+}
+
+function isDirectMediaDownloadRequest(payload: JobPayload) {
+  return payload.format === "mp3" && isDirectMediaFileUrl(payload.url);
+}
+
+function normalizeDirectMediaUrl(url: string) {
+  const parsedUrl = new URL(url);
+
+  if (isYouTubeHost(parsedUrl.hostname)) {
+    throw new MetadataExtractionError(
+      "Direct media downloading does not support YouTube URLs.",
+      400,
+    );
+  }
+
+  const extension = path.extname(parsedUrl.pathname).toLowerCase();
+
+  if (!SUPPORTED_DIRECT_MEDIA_EXTENSIONS.has(extension)) {
+    throw new MetadataExtractionError(
+      "Direct media URL must end with a supported file extension.",
+      400,
+    );
+  }
+
+  return parsedUrl.toString();
+}
+
+function buildDirectDownloadFilename(jobId: string, url: string) {
+  const extension = path.extname(new URL(url).pathname).toLowerCase() || ".bin";
+  const safeJobId = jobId.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+  return `${safeJobId}${extension}`;
+}
+
+function buildDirectMediaMetadata(url: string): JobMetadata {
+  const parsedUrl = new URL(url);
+  const filename = decodeURIComponent(path.basename(parsedUrl.pathname)) || "Direct media file";
+
+  return {
+    title: filename,
+    duration: null,
+    formats: [],
+  };
+}
+
+async function downloadDirectMediaJob(jobId: string, normalizedUrl: string, filename: string) {
+  const filePath = path.join(DOWNLOADS_DIR, filename);
+  let fileHandle: Awaited<ReturnType<typeof open>> | null = null;
+
+  try {
+    updateDirectDownloadJob(jobId, {
+      status: "processing",
+      progress: 1,
+      message: "Worker job processing.",
+    });
+
+    const response = await fetch(normalizedUrl);
+
+    if (!response.ok || !response.body) {
+      throw new Error("Direct media request failed.");
+    }
+
+    const totalBytes = Number(response.headers.get("content-length") ?? "0");
+    const reader = response.body.getReader();
+    fileHandle = await open(filePath, "w");
+    let downloadedBytes = 0;
+    let fallbackProgress = 25;
+
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      await fileHandle.write(value);
+      downloadedBytes += value.byteLength;
+
+      if (totalBytes > 0) {
+        updateDirectDownloadJob(jobId, {
+          status: "processing",
+          progress: clampProgress(Math.min(99, Math.floor((downloadedBytes / totalBytes) * 100))),
+          message: "Worker job processing.",
+        });
+      } else {
+        fallbackProgress = Math.min(95, fallbackProgress + 10);
+        updateDirectDownloadJob(jobId, {
+          status: "processing",
+          progress: fallbackProgress,
+          message: "Worker job processing.",
+        });
+      }
+    }
+
+    await fileHandle.close();
+    fileHandle = null;
+
+    updateDirectDownloadJob(jobId, {
+      status: "complete",
+      progress: 100,
+      message: "Worker job complete.",
+    });
+  } catch {
+    if (fileHandle) {
+      await fileHandle.close().catch(() => undefined);
+    }
+
+    await unlink(filePath).catch(() => undefined);
+    updateDirectDownloadJob(jobId, {
+      status: "failed",
+      progress: 0,
+      message: "Unable to download direct media file.",
+    });
+  }
+}
+
+function updateDirectDownloadJob(
+  jobId: string,
+  updates: Partial<StoredDirectDownloadJob>,
+) {
+  const currentJob = directDownloadJobStore.get(jobId);
+
+  if (!currentJob) {
+    return;
+  }
+
+  directDownloadJobStore.set(jobId, {
+    ...currentJob,
+    ...updates,
+  });
+}
+
 async function extractJobMetadata(url: string): Promise<{
   metadata: JobMetadata;
   message?: string;
@@ -266,6 +476,10 @@ async function extractJobMetadata(url: string): Promise<{
 
 function isPlaylistUrl(url: URL) {
   return Boolean(url.searchParams.get("list")) || url.pathname === "/playlist";
+}
+
+function isYouTubeHost(hostname: string) {
+  return hostname === "youtube.com" || hostname === "www.youtube.com" || hostname === "youtu.be";
 }
 
 type YtDlpVideoFormat = {
