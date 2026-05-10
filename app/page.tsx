@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createJob,
@@ -9,6 +9,13 @@ import {
   type JobResponse,
   type JobStatusResponse,
 } from "@/lib/apiClient";
+import {
+  addItem,
+  isLibrarySupported,
+  requestPersistentStorage,
+} from "@/lib/library";
+
+import { LibraryView } from "./components/LibraryView";
 
 type FormatOption = "mp3" | "mp4";
 type QualityOption =
@@ -228,7 +235,10 @@ function statusToneClass(status: JobStatusResponse["status"] | undefined): strin
   }
 }
 
+type Tab = "downloader" | "library";
+
 export default function HomePage() {
+  const [tab, setTab] = useState<Tab>("downloader");
   const [url, setUrl] = useState("");
   const [format, setFormat] = useState<FormatOption>("mp3");
   const [quality, setQuality] = useState<QualityOption>("best");
@@ -237,9 +247,24 @@ export default function HomePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [recentJobs, setRecentJobs] = useState<RecentJob[]>([]);
   const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [librarySaveStatus, setLibrarySaveStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [librarySaveError, setLibrarySaveError] = useState<string | null>(null);
+  const [libraryReloadKey, setLibraryReloadKey] = useState(0);
+  const autoSavedJobIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setRecentJobs(loadRecentJobs());
+  }, []);
+
+  // One-time: ask the browser to keep our OPFS data when storage is tight.
+  // Required for iOS PWAs to retain the library across long periods of disuse.
+  useEffect(() => {
+    if (!isLibrarySupported()) {
+      return;
+    }
+    void requestPersistentStorage();
   }, []);
 
   useEffect(() => {
@@ -362,6 +387,68 @@ export default function HomePage() {
     };
   }, [job?.id, job?.status, url, format, quality, upsertRecentJob]);
 
+  // Auto-save completed downloads into the in-app library (OPFS).
+  // Runs once per job ID once the worker reports `complete` and gives us a
+  // downloadUrl. Skips if OPFS isn't supported (e.g. very old browsers).
+  useEffect(() => {
+    if (!job || job.status !== "complete" || !job.downloadUrl) {
+      return;
+    }
+    if (!isLibrarySupported()) {
+      return;
+    }
+    if (autoSavedJobIds.current.has(job.id)) {
+      return;
+    }
+
+    autoSavedJobIds.current.add(job.id);
+    let cancelled = false;
+
+    setLibrarySaveStatus("saving");
+    setLibrarySaveError(null);
+
+    (async () => {
+      try {
+        const response = await fetch(job.downloadUrl as string);
+        if (!response.ok) {
+          throw new Error(`Download failed (${response.status}).`);
+        }
+        const blob = await response.blob();
+        if (cancelled) {
+          return;
+        }
+        await addItem({
+          blob,
+          title: job.metadata?.title || url || "Untitled",
+          sourceUrl: url,
+          format,
+          quality,
+          duration: job.metadata?.duration ?? null,
+          thumbnail: job.metadata?.thumbnail,
+          author: job.metadata?.author,
+        });
+        if (cancelled) {
+          return;
+        }
+        setLibrarySaveStatus("saved");
+        setLibraryReloadKey((current) => current + 1);
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+        autoSavedJobIds.current.delete(job.id);
+        setLibrarySaveStatus("error");
+        setLibrarySaveError(
+          err instanceof Error ? err.message : "Unknown error saving to library.",
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [job, url, format, quality]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -377,6 +464,8 @@ export default function HomePage() {
     setIsSubmitting(true);
     setError(null);
     setJob(null);
+    setLibrarySaveStatus("idle");
+    setLibrarySaveError(null);
 
     try {
       const { response, data } = await createJob({ url: url.trim(), format, quality });
@@ -492,6 +581,33 @@ export default function HomePage() {
         </div>
       </header>
 
+      <nav className="tab-bar" role="tablist" aria-label="Sections">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "downloader"}
+          className={`tab${tab === "downloader" ? " active" : ""}`}
+          onClick={() => setTab("downloader")}
+        >
+          Downloader
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "library"}
+          className={`tab${tab === "library" ? " active" : ""}`}
+          onClick={() => setTab("library")}
+        >
+          Library
+        </button>
+      </nav>
+
+      {tab === "library" ? (
+        <LibraryView reloadKey={libraryReloadKey} />
+      ) : null}
+
+      {tab === "downloader" ? (
+        <>
       <section className="panel">
         <form className="job-form" onSubmit={handleSubmit}>
           <label className="field">
@@ -596,9 +712,23 @@ export default function HomePage() {
               {job.message ? <p>{friendlyJobMessage(job.message, job.status)}</p> : null}
 
               {hasDownload && job.downloadUrl ? (
-                <a className="download-link" href={job.downloadUrl} download>
-                  Download {format.toUpperCase()} file
-                </a>
+                <div className="download-row">
+                  <a className="download-link" href={job.downloadUrl} download>
+                    Save to device
+                  </a>
+                  <span
+                    className={`save-status save-${librarySaveStatus}`}
+                    aria-live="polite"
+                  >
+                    {librarySaveStatus === "saving"
+                      ? "Saving to library…"
+                      : librarySaveStatus === "saved"
+                        ? "Saved to library"
+                        : librarySaveStatus === "error"
+                          ? `Library save failed: ${librarySaveError ?? "unknown"}`
+                          : ""}
+                  </span>
+                </div>
               ) : null}
             </div>
           ) : null}
@@ -698,6 +828,8 @@ export default function HomePage() {
             ))}
           </ul>
         </section>
+      ) : null}
+        </>
       ) : null}
 
       <footer className="footer">

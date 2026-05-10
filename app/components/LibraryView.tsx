@@ -1,0 +1,443 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import {
+  DEFAULT_FOLDER_ID,
+  createFolder,
+  exportManifest,
+  formatDurationShort,
+  formatFileSize,
+  getItemBlob,
+  getStorageEstimate,
+  importManifest,
+  isLibrarySupported,
+  loadManifest,
+  type Manifest,
+  type ManifestItem,
+  moveItem,
+  removeFolder,
+  removeItem,
+  renameFolder,
+  renameItem,
+  type StorageEstimate,
+} from "@/lib/library";
+
+import { MediaPlayer } from "./MediaPlayer";
+
+type LibraryViewProps = {
+  reloadKey: number;
+};
+
+export function LibraryView({ reloadKey }: LibraryViewProps) {
+  const [supported] = useState(() => isLibrarySupported());
+  const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [activeFolderId, setActiveFolderId] = useState<string>(DEFAULT_FOLDER_ID);
+  const [storage, setStorage] = useState<StorageEstimate | null>(null);
+  const [playingItem, setPlayingItem] = useState<ManifestItem | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!supported) {
+      return;
+    }
+    const [next, est] = await Promise.all([loadManifest(), getStorageEstimate()]);
+    setManifest(next);
+    setStorage(est);
+  }, [supported]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh, reloadKey]);
+
+  const folders = manifest?.folders ?? [];
+  const items = useMemo(() => {
+    if (!manifest) {
+      return [];
+    }
+    return manifest.items
+      .filter((item) => item.folderId === activeFolderId)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }, [manifest, activeFolderId]);
+
+  const handleCreateFolder = useCallback(async () => {
+    const name = window.prompt("Folder name");
+    if (!name) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const folder = await createFolder(name);
+      await refresh();
+      setActiveFolderId(folder.id);
+    } finally {
+      setBusy(false);
+    }
+  }, [refresh]);
+
+  const handleRenameFolder = useCallback(
+    async (folderId: string, currentName: string) => {
+      if (folderId === DEFAULT_FOLDER_ID) {
+        return;
+      }
+      const next = window.prompt("Rename folder", currentName);
+      if (!next) {
+        return;
+      }
+      setBusy(true);
+      try {
+        await renameFolder(folderId, next);
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refresh],
+  );
+
+  const handleDeleteFolder = useCallback(
+    async (folderId: string) => {
+      if (folderId === DEFAULT_FOLDER_ID) {
+        return;
+      }
+      const ok = window.confirm(
+        "Delete this folder? Files inside will be moved to Default.",
+      );
+      if (!ok) {
+        return;
+      }
+      setBusy(true);
+      try {
+        await removeFolder(folderId);
+        setActiveFolderId(DEFAULT_FOLDER_ID);
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refresh],
+  );
+
+  const handleMove = useCallback(
+    async (item: ManifestItem) => {
+      if (folders.length <= 1) {
+        window.alert("Create another folder first.");
+        return;
+      }
+      const options = folders
+        .filter((folder) => folder.id !== item.folderId)
+        .map((folder, index) => `${index + 1}. ${folder.name}`)
+        .join("\n");
+      const choice = window.prompt(
+        `Move "${item.title}" to which folder?\n${options}`,
+      );
+      if (!choice) {
+        return;
+      }
+      const idx = Number(choice.trim()) - 1;
+      const targetFolders = folders.filter((folder) => folder.id !== item.folderId);
+      const target = targetFolders[idx];
+      if (!target) {
+        return;
+      }
+      setBusy(true);
+      try {
+        await moveItem(item.id, target.id);
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [folders, refresh],
+  );
+
+  const handleRename = useCallback(
+    async (item: ManifestItem) => {
+      const next = window.prompt("Rename item", item.title);
+      if (!next) {
+        return;
+      }
+      setBusy(true);
+      try {
+        await renameItem(item.id, next);
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refresh],
+  );
+
+  const handleDeleteItem = useCallback(
+    async (item: ManifestItem) => {
+      const ok = window.confirm(`Delete "${item.title}" from your library?`);
+      if (!ok) {
+        return;
+      }
+      setBusy(true);
+      try {
+        await removeItem(item.id);
+        await refresh();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refresh],
+  );
+
+  const handleExportToDevice = useCallback(async (item: ManifestItem) => {
+    const blob = await getItemBlob(item);
+    if (!blob) {
+      window.alert("This item is missing from the library and can't be exported.");
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const safeName = item.title.replace(/[^\w.\- ]+/g, "_") || item.id;
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${safeName}.${item.format}`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }, []);
+
+  const handleExportManifest = useCallback(async () => {
+    const text = await exportManifest();
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `library-manifest-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }, []);
+
+  const handleImportClick = useCallback(() => {
+    importInputRef.current?.click();
+  }, []);
+
+  const handleImportChange = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) {
+        return;
+      }
+      setImportError(null);
+      setBusy(true);
+      try {
+        const text = await file.text();
+        await importManifest(text);
+        await refresh();
+      } catch {
+        setImportError("That file doesn't look like a valid manifest.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refresh],
+  );
+
+  if (!supported) {
+    return (
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Library</h2>
+        </div>
+        <p className="muted-text">
+          This browser doesn&apos;t support in-app storage (OPFS). Try the latest Safari,
+          Chrome, Edge, or Samsung Internet.
+        </p>
+      </section>
+    );
+  }
+
+  const totalUsed = storage ? formatFileSize(storage.used) : "0 B";
+  const totalQuota = storage && storage.quota > 0 ? formatFileSize(storage.quota) : null;
+  const usedPercent =
+    storage && storage.quota > 0
+      ? Math.min(100, Math.round((storage.used / storage.quota) * 100))
+      : null;
+
+  return (
+    <>
+      <section className="panel library-panel">
+        <div className="section-heading">
+          <h2>Library</h2>
+          <span className="job-id">
+            {totalQuota
+              ? `${totalUsed} / ${totalQuota}${storage?.persisted ? " · persisted" : ""}`
+              : totalUsed}
+          </span>
+        </div>
+
+        {usedPercent !== null ? (
+          <div className="storage-meter" aria-hidden>
+            <div
+              className="storage-meter-fill"
+              style={{ width: `${Math.max(2, usedPercent)}%` }}
+            />
+          </div>
+        ) : null}
+
+        <div className="folder-bar">
+          <div className="folder-list" role="tablist" aria-label="Library folders">
+            {folders.map((folder) => {
+              const itemCount =
+                manifest?.items.filter((entry) => entry.folderId === folder.id).length ?? 0;
+              const isActive = folder.id === activeFolderId;
+              return (
+                <button
+                  key={folder.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  className={`folder-chip${isActive ? " active" : ""}`}
+                  onClick={() => setActiveFolderId(folder.id)}
+                  onDoubleClick={() => void handleRenameFolder(folder.id, folder.name)}
+                  title={
+                    folder.id === DEFAULT_FOLDER_ID
+                      ? folder.name
+                      : "Click to open · double-click to rename"
+                  }
+                >
+                  <span>{folder.name}</span>
+                  <span className="folder-count">{itemCount}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="folder-actions">
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => void handleCreateFolder()}
+              disabled={busy}
+            >
+              + New folder
+            </button>
+            {activeFolderId !== DEFAULT_FOLDER_ID ? (
+              <button
+                type="button"
+                className="link-button danger"
+                onClick={() => void handleDeleteFolder(activeFolderId)}
+                disabled={busy}
+              >
+                Delete folder
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {items.length === 0 ? (
+          <div className="empty-card">
+            <p>No items in this folder yet.</p>
+            <p className="muted-text">
+              Finished downloads automatically save here. Use Move to organize.
+            </p>
+          </div>
+        ) : (
+          <ul className="library-list">
+            {items.map((item) => {
+              const duration = formatDurationShort(item.duration);
+              return (
+                <li key={item.id} className={`library-item${item.missing ? " missing" : ""}`}>
+                  <button
+                    type="button"
+                    className="library-row"
+                    onClick={() => setPlayingItem(item)}
+                    disabled={item.missing}
+                    title={item.missing ? "File missing — re-download to play" : "Play"}
+                  >
+                    {item.thumbnail ? (
+                      <img className="library-thumb" src={item.thumbnail} alt="" />
+                    ) : (
+                      <span className="library-thumb fallback" aria-hidden>
+                        {item.format.toUpperCase()}
+                      </span>
+                    )}
+                    <span className="library-meta">
+                      <span className="library-title">{item.title}</span>
+                      <span className="library-sub">
+                        {item.format.toUpperCase()}
+                        {duration ? ` · ${duration}` : ""}
+                        {item.fileSize > 0 ? ` · ${formatFileSize(item.fileSize)}` : ""}
+                        {item.missing ? " · missing" : ""}
+                      </span>
+                    </span>
+                  </button>
+                  <div className="library-actions">
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={() => void handleExportToDevice(item)}
+                      disabled={busy || item.missing}
+                      aria-label="Save to device"
+                      title="Save to device"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={() => void handleMove(item)}
+                      disabled={busy}
+                      aria-label="Move to folder"
+                      title="Move to folder"
+                    >
+                      ⇄
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={() => void handleRename(item)}
+                      disabled={busy}
+                      aria-label="Rename"
+                      title="Rename"
+                    >
+                      ✎
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button danger"
+                      onClick={() => void handleDeleteItem(item)}
+                      disabled={busy}
+                      aria-label="Delete"
+                      title="Delete"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <div className="library-footer">
+          <button type="button" className="link-button" onClick={() => void handleExportManifest()}>
+            Export manifest
+          </button>
+          <button type="button" className="link-button" onClick={handleImportClick}>
+            Import manifest
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(event) => void handleImportChange(event)}
+          />
+        </div>
+        {importError ? <p className="hint hint-warning">{importError}</p> : null}
+      </section>
+
+      <MediaPlayer item={playingItem} onClose={() => setPlayingItem(null)} />
+    </>
+  );
+}
