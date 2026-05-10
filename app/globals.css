@@ -22,6 +22,11 @@ html,
 body {
   margin: 0;
   min-height: 100%;
+  /* Lock the page horizontally so long URLs / error strings can never push
+     the layout wider than the viewport, and so touch users can't pan
+     sideways or pinch-zoom out of the layout. */
+  max-width: 100vw;
+  overflow-x: hidden;
   background:
     radial-gradient(circle at top, rgba(97, 218, 251, 0.14), transparent 30%),
     linear-gradient(180deg, #06090f 0%, var(--bg) 100%);
@@ -32,6 +37,9 @@ body {
 
 body {
   min-height: 100vh;
+  touch-action: pan-y;
+  overscroll-behavior-x: none;
+  -webkit-text-size-adjust: 100%;
 }
 
 button,
@@ -51,11 +59,11 @@ code {
 }
 
 .shell {
-  width: min(960px, calc(100% - 32px));
+  width: min(720px, calc(100% - 24px));
   margin: 0 auto;
-  padding: 24px 0 72px;
+  padding: 18px 0 calc(48px + env(safe-area-inset-bottom));
   display: grid;
-  gap: 20px;
+  gap: 14px;
 }
 
 .topbar {
@@ -115,61 +123,20 @@ code {
 .panel {
   background: var(--panel);
   border: 1px solid var(--panel-border);
-  border-radius: 20px;
-  padding: 24px;
+  border-radius: 18px;
+  padding: 18px;
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
 }
 
-.hero {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 20px;
-}
-
-.eyebrow {
-  margin: 0 0 10px;
-  color: var(--accent);
-  font-size: 0.78rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.hero h1,
 .section-heading h2 {
   margin: 0;
 }
 
-.hero h1 {
-  font-size: clamp(1.45rem, 2.4vw, 1.85rem);
-  line-height: 1.25;
-  letter-spacing: -0.01em;
-}
-
-.hero-copy,
 .helper-text,
 .status-card p,
-.result-placeholder p,
 .section-heading span {
   color: var(--muted);
-}
-
-.hero-copy {
-  max-width: 60ch;
-  margin: 12px 0 0;
-  line-height: 1.6;
-}
-
-.hero-badge {
-  white-space: nowrap;
-  border-radius: 999px;
-  padding: 8px 14px;
-  background: rgba(97, 218, 251, 0.1);
-  color: var(--accent);
-  border: 1px solid rgba(97, 218, 251, 0.2);
-  font-size: 0.78rem;
-  letter-spacing: 0.05em;
 }
 
 .job-form {
@@ -271,21 +238,42 @@ code {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: center;
-  margin-bottom: 16px;
+  align-items: baseline;
+  margin-bottom: 12px;
 }
 
 .section-heading h2 {
-  font-size: 1.05rem;
-  letter-spacing: -0.01em;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
 }
 
-.status-card,
-.result-placeholder {
-  border-radius: 16px;
-  padding: 18px;
-  background: rgba(7, 11, 18, 0.8);
+.job-id {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+.status-card {
+  border-radius: 14px;
+  padding: 16px;
+  background: rgba(7, 11, 18, 0.7);
   border: 1px solid rgba(152, 167, 194, 0.14);
+  display: grid;
+  gap: 10px;
+}
+
+/* Long stderr / URLs from yt-dlp must wrap so they can never blow out the
+   container width and trigger horizontal scroll on small viewports. */
+.status-card p,
+.metadata-copy p,
+.metadata-copy h3 {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .status-row {
@@ -437,8 +425,8 @@ code {
   color: #05111a;
   font-weight: 700;
   text-decoration: none;
-  margin-top: 10px;
   transition: transform 80ms ease;
+  justify-self: start;
 }
 
 .download-link:hover {
@@ -590,19 +578,13 @@ code {
 }
 
 @media (max-width: 720px) {
-  .shell {
-    width: min(100% - 24px, 960px);
-    padding-top: 16px;
-  }
-
-  .hero,
   .field-grid {
     grid-template-columns: 1fr;
-    display: grid;
   }
 
-  .hero-badge {
-    justify-self: start;
+  .panel {
+    padding: 16px;
+    border-radius: 16px;
   }
 
   .topbar {
@@ -612,7 +594,7 @@ code {
 
 @media (min-width: 721px) {
   .metadata-card {
-    grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+    grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
     align-items: start;
   }
 }

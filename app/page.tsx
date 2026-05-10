@@ -177,6 +177,43 @@ function statusLabel(status: JobStatusResponse["status"] | undefined): string {
   }
 }
 
+function friendlyJobMessage(
+  rawMessage: string,
+  status: JobStatusResponse["status"] | undefined,
+): string {
+  if (!rawMessage) {
+    return "";
+  }
+
+  // Most yt-dlp failure messages we care about have very recognizable substrings.
+  // Translate them into something a non-technical user can act on.
+  if (status === "failed") {
+    const lower = rawMessage.toLowerCase();
+
+    if (
+      lower.includes("sign in to confirm") ||
+      lower.includes("login_required") ||
+      lower.includes("login required")
+    ) {
+      return "YouTube blocked this download from the server. This usually happens with music label uploads or age-restricted videos. Other YouTube videos should still work.";
+    }
+
+    if (lower.includes("video unavailable") || lower.includes("not available in your country")) {
+      return "This video isn't available to the worker (region locked or removed).";
+    }
+
+    if (lower.includes("private video")) {
+      return "This video is private and can't be downloaded.";
+    }
+
+    if (lower.includes("requested format is not available")) {
+      return "The requested quality isn't offered for this video. Try a different quality.";
+    }
+  }
+
+  return rawMessage;
+}
+
 function statusToneClass(status: JobStatusResponse["status"] | undefined): string {
   switch (status) {
     case "complete":
@@ -455,19 +492,6 @@ export default function HomePage() {
         </div>
       </header>
 
-      <section className="panel hero">
-        <div>
-          <p className="eyebrow">Local downloader</p>
-          <h1>Download non-copyrighted media</h1>
-          <p className="hero-copy">
-            Paste a YouTube link or any direct media URL. The local worker uses{" "}
-            <code>yt-dlp</code> + <code>ffmpeg</code> to fetch the media and serves the file
-            back here when ready.
-          </p>
-        </div>
-        <div className="hero-badge">PWA · App Router · TypeScript</div>
-      </section>
-
       <section className="panel">
         <form className="job-form" onSubmit={handleSubmit}>
           <label className="field">
@@ -475,11 +499,15 @@ export default function HomePage() {
             <input
               type="url"
               name="url"
-              placeholder="https://www.youtube.com/watch?v=... or https://example.com/clip.mp4"
+              placeholder="Paste a YouTube or direct media URL"
               value={url}
               onChange={(event) => setUrl(event.target.value)}
               aria-invalid={isInvalidUrl}
               spellCheck={false}
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              inputMode="url"
             />
             <span className={`hint hint-${urlHelper.tone}`}>{urlHelper.text}</span>
           </label>
@@ -533,50 +561,54 @@ export default function HomePage() {
         </form>
       </section>
 
-      <section className="panel status-panel">
-        <div className="section-heading">
-          <h2>Status</h2>
-          <span>{job ? `Job ${job.id.slice(-8)}` : "No active job"}</span>
-        </div>
+      {error || job ? (
+        <section className="panel">
+          <div className="section-heading">
+            <h2>Download</h2>
+            {job ? <span className="job-id">Job {job.id.slice(-8)}</span> : null}
+          </div>
 
-        {error ? (
-          <div className="status-card error">
-            <strong>Request failed</strong>
-            <p>{error}</p>
-          </div>
-        ) : job ? (
-          <div className={`status-card ${tone}`}>
-            <div className="status-row">
-              <strong>{statusLabel(job.status)}</strong>
-              <span className="status-percent">{progressPercent}%</span>
+          {error ? (
+            <div className="status-card error">
+              <div className="status-row">
+                <strong>Request failed</strong>
+              </div>
+              <p>{error}</p>
             </div>
-            <div
-              className="progress"
-              role="progressbar"
-              aria-valuenow={progressPercent}
-              aria-valuemin={0}
-              aria-valuemax={100}
-            >
+          ) : job ? (
+            <div className={`status-card ${tone}`}>
+              <div className="status-row">
+                <strong>{statusLabel(job.status)}</strong>
+                <span className="status-percent">{progressPercent}%</span>
+              </div>
               <div
-                className={`progress-bar ${tone}`}
-                style={{ width: `${progressPercent}%` }}
-              />
+                className="progress"
+                role="progressbar"
+                aria-valuenow={progressPercent}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
+                <div
+                  className={`progress-bar ${tone}`}
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+              {job.message ? <p>{friendlyJobMessage(job.message, job.status)}</p> : null}
+
+              {hasDownload && job.downloadUrl ? (
+                <a className="download-link" href={job.downloadUrl} download>
+                  Download {format.toUpperCase()} file
+                </a>
+              ) : null}
             </div>
-            <p>{job.message}</p>
-          </div>
-        ) : (
-          <div className="status-card idle">
-            <strong>No active request</strong>
-            <p>Submit a URL above to start a real worker download.</p>
-          </div>
-        )}
-      </section>
+          ) : null}
+        </section>
+      ) : null}
 
       {showMetadataCard ? (
-        <section className="panel metadata-panel">
+        <section className="panel">
           <div className="section-heading">
-            <h2>Source preview</h2>
-            <span>From worker metadata</span>
+            <h2>Preview</h2>
           </div>
           <article className="metadata-card">
             {metadata?.thumbnail ? (
@@ -606,38 +638,6 @@ export default function HomePage() {
           </article>
         </section>
       ) : null}
-
-      <section className="panel result-panel">
-        <div className="section-heading">
-          <h2>Result</h2>
-          <span>Download area</span>
-        </div>
-        <div className="result-placeholder">
-          {hasDownload && job?.downloadUrl ? (
-            <>
-              <p>Your file is ready.</p>
-              <a className="download-link" href={job.downloadUrl} download>
-                Download {format.toUpperCase()} file
-              </a>
-            </>
-          ) : job?.status === "complete" ? (
-            <>
-              <p>Job finished, but no download URL was returned.</p>
-              <p>The worker may still be finalizing the file. Try refreshing in a moment.</p>
-            </>
-          ) : job?.status === "failed" ? (
-            <>
-              <p>The worker reported a failure for this job.</p>
-              <p>{job.message}</p>
-            </>
-          ) : (
-            <>
-              <p>No file ready yet.</p>
-              <p>Once the worker finishes, the download link will appear here.</p>
-            </>
-          )}
-        </div>
-      </section>
 
       {recentJobs.length > 0 ? (
         <section className="panel recent-panel">
