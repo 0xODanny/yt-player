@@ -1,7 +1,7 @@
 export type JobPayload = {
   url: string;
   format: "mp3" | "mp4";
-  quality: "best" | "1080p" | "720p" | "audio-only";
+  quality: "best" | "1080p" | "720p" | "480p" | "360p" | "audio-only";
 };
 
 export type JobStatus = "queued" | "processing" | "complete" | "failed";

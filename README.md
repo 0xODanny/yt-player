@@ -1,68 +1,104 @@
 # YT Local Tool
 
-YT Local Tool is a lightweight Next.js App Router PWA shell for submitting and tracking mock media jobs.
+A Next.js App Router PWA paired with a small Express worker for downloading non-copyrighted YouTube videos and direct media URLs.
 
-The current app is intended as a local-first frontend scaffold that can later talk to a private worker API. It includes a fake local job queue, status polling, PWA metadata, and placeholder download handling.
+The frontend submits jobs and polls progress. The worker runs `yt-dlp` (and `ffmpeg` for audio extraction / stream merging) to actually fetch the media, then serves the resulting file back through `/files/:id`.
 
-Real media processing is not implemented yet.
+## Production Topology
 
-## Purpose
+| Tier      | Host                | Domain                  | Responsibility                                         |
+| --------- | ------------------- | ----------------------- | ------------------------------------------------------ |
+| Frontend  | Vercel              | `pepinho.lol`           | Next.js PWA, polling UI, calls the worker              |
+| Worker    | DigitalOcean        | `worker.pepinho.lol`    | `yt-dlp` + `ffmpeg`, file storage, `/files/...`        |
 
-- Provide a simple local utility interface for entering a media URL and selecting output options.
-- Support a future external worker API while keeping a local fake API fallback for development.
-- Stay lightweight and easy to deploy on Vercel as a frontend shell.
+The frontend on Vercel is **stateless** — it only talks to the worker via `NEXT_PUBLIC_WORKER_API_URL` using `NEXT_PUBLIC_WORKER_API_KEY` as a bearer token. All long-running work happens on DigitalOcean.
 
-## Local Development
+When `NEXT_PUBLIC_WORKER_API_URL` is unset, the frontend falls back to the in-Next.js `/api/jobs` routes that simulate a job (handy for local dev without the worker).
 
-Install dependencies:
+## Repository Layout
+
+- `app/`, `lib/`, `public/` — Next.js PWA frontend
+- `public/sw.js` — service worker that caches the app shell for offline use
+- `worker/` — standalone Express worker (`yt-dlp` + `ffmpeg`)
+
+## Frontend Quick Start
 
 ```bash
 npm install
-```
-
-Start the development server:
-
-```bash
-npm run dev
-```
-
-Create a production build:
-
-```bash
+npm run dev      # http://localhost:3000
 npm run build
+npm run start
+npm run typecheck
 ```
 
-Start the production server locally:
+### Frontend Environment
+
+Copy `.env.local.example` to `.env.local`. In production those values are set in the Vercel project settings instead.
+
+- `NEXT_PUBLIC_WORKER_API_URL` — e.g. `https://worker.pepinho.lol`
+- `NEXT_PUBLIC_WORKER_API_KEY` — must equal the worker's `WORKER_API_SECRET`
+
+## Worker Quick Start
 
 ```bash
-npm run start
+cd worker
+npm install
+npm run dev      # http://localhost:3001
 ```
 
-## Environment Variables
+See `worker/README.md` for details. Worker env (`worker/.env`, gitignored):
 
-Copy values from `.env.local.example` into `.env.local` as needed.
+- `PORT` (default `3001`)
+- `WORKER_API_SECRET` — required, shared with the frontend
+- `ALLOWED_ORIGIN` — exact browser origin allowed by CORS (e.g. `https://pepinho.lol`)
+- `YT_DLP_BINARY`, `FFMPEG_BINARY` — optional binary overrides
 
-- `NEXT_PUBLIC_WORKER_API_URL`
-  Optional external worker base URL. When blank, the app uses the local fake Next.js API routes.
-- `NEXT_PUBLIC_WORKER_API_KEY`
-  Optional bearer token used only for external worker API requests.
-- `DOWNLOADS_DIR`
-  Local placeholder setting for future download/output handling.
+## PWA
 
-`.env.local` is intentionally gitignored and should not be committed.
+- `public/manifest.json` — installable app metadata
+- `public/sw.js` — hand-rolled service worker (network-first for HTML, stale-while-revalidate for static assets, never caches `/api/*`, `/files/*`, or cross-origin)
+- `app/sw-register.tsx` — registers the SW only in production
 
-## Vercel Deployment Notes
+## Supported Output
 
-- This app can be deployed to Vercel as a standard Next.js project.
-- Set `NEXT_PUBLIC_WORKER_API_URL` and `NEXT_PUBLIC_WORKER_API_KEY` in the Vercel project settings only if you want the deployed frontend to call an external worker.
-- If those values are not set, the app falls back to the included fake local API routes.
-- The health check endpoint is available at `/api/health`.
-- No service worker is configured yet.
-- No real media downloading, conversion, or worker processing is implemented yet.
+- **MP3** — extracted via ffmpeg from any yt-dlp-supported source or direct media URL
+- **MP4** — merged best video + best audio, capped by selected quality:
+  - Best available
+  - Up to 1080p
+  - Up to 720p
+  - Up to 480p (lighter)
+  - Up to 360p (data saver)
+  - Audio only (forces MP3 extraction)
 
-## Current Status
+Direct media URLs (`.mp3`, `.mp4`, `.m4a`, `.wav`, `.mov`, `.webm`) are downloaded as-is in MP3 mode.
 
-- Fake local job creation is implemented.
-- Fake local polling is implemented.
-- Placeholder download links are implemented for UI flow only.
-- Real backend processing is not implemented yet.
+## Vercel Deployment
+
+1. Connect the GitHub repo to Vercel (already done for `pepinho.lol`).
+2. In Project Settings → Environment Variables, add:
+   - `NEXT_PUBLIC_WORKER_API_URL=https://worker.pepinho.lol`
+   - `NEXT_PUBLIC_WORKER_API_KEY=<same long random string as the worker>`
+3. Deployments are triggered automatically on pushes to `main`.
+
+## DigitalOcean Worker Deployment
+
+See `worker/README.md` for the full Ubuntu / PM2 / nginx setup. Summary:
+
+```bash
+sudo apt install -y python3-pip ffmpeg
+python3 -m pip install -U yt-dlp --break-system-packages
+cd worker
+npm install
+npm run build
+npm run start:prod        # PM2
+```
+
+`worker.pepinho.lol` should terminate TLS at nginx and proxy to the PM2-managed Node process on `127.0.0.1:3001`. The worker reads `X-Forwarded-Proto` so the `downloadUrl` it returns to the frontend is correctly `https://worker.pepinho.lol/files/...`.
+
+## Status
+
+- Frontend PWA with installable manifest and offline shell — ✓
+- Worker performs real `yt-dlp` downloads with progress reporting — ✓
+- MP3 + MP4 with quality selection down to 360p — ✓
+- Recent jobs list, progress bar, online indicator, URL classification hints — ✓
+- Use only on content you own or that is in the public domain.

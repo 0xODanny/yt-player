@@ -1,10 +1,17 @@
 const allowedFormats = new Set(["mp3", "mp4"]);
-const allowedQualities = new Set(["best", "1080p", "720p", "audio-only"]);
+const allowedQualities = new Set([
+  "best",
+  "1080p",
+  "720p",
+  "480p",
+  "360p",
+  "audio-only",
+]);
 
 export type JobInput = {
   url: string;
   format: "mp3" | "mp4";
-  quality: "best" | "1080p" | "720p" | "audio-only";
+  quality: "best" | "1080p" | "720p" | "480p" | "360p" | "audio-only";
 };
 
 type ValidationResult =
