@@ -650,6 +650,8 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
 
+  let lastLoggedProgress = -1;
+
   const handleLine = (line: string) => {
     const trimmed = line.trim();
     if (!trimmed) {
@@ -663,6 +665,22 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
         progress: clampProgress(Math.min(99, progress)),
         message: "Worker job processing.",
       });
+
+      // Echo progress to worker logs at 10% boundaries so `pm2 logs` is
+      // useful for observing download speed without having to also tail
+      // the PWA's polling. The original line includes speed + ETA.
+      const bucket = Math.floor(progress / 10) * 10;
+      if (bucket !== lastLoggedProgress) {
+        lastLoggedProgress = bucket;
+        console.log(`[job ${jobId}] ${trimmed}`);
+      }
+    } else if (
+      /\[(youtube|info|download|ExtractAudio|Merger)\]/i.test(trimmed) ||
+      /^ERROR/i.test(trimmed)
+    ) {
+      // Log non-progress yt-dlp status lines (extractor switches, format
+      // selection, errors) so we can see what's happening end-to-end.
+      console.log(`[job ${jobId}] ${trimmed}`);
     }
   };
 
