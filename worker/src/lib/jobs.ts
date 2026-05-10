@@ -399,8 +399,18 @@ async function downloadDirectMediaJob(jobId: string, normalizedUrl: string, file
 function buildYtDlpFormatArgs(payload: JobPayload): string[] {
   const args: string[] = [];
 
-  if (payload.format === "mp3") {
+  // For MP3, try bestaudio first (highest quality) but fall back through
+  // itag 18 (the legacy 360p MP4 with baked-in AAC audio). YouTube gates
+  // audio-only DASH streams more aggressively than the bundled itag 18 —
+  // music-label uploads and anything with PRO claims often refuse the
+  // bestaudio fetch but happily serve itag 18, since that format predates
+  // the audio/video split and goes through the permissive legacy path.
+  // ffmpeg then strips the audio track and re-encodes to mp3, so the
+  // quality difference is negligible (~96-128 kbps AAC source either way).
+  if (payload.format === "mp3" || payload.quality === "audio-only") {
     args.push(
+      "-f",
+      "bestaudio[ext=m4a]/bestaudio/18/best[ext=mp4]/best",
       "-x",
       "--audio-format",
       "mp3",
@@ -410,13 +420,8 @@ function buildYtDlpFormatArgs(payload: JobPayload): string[] {
     return args;
   }
 
-  if (payload.quality === "audio-only") {
-    // Force mp3 audio extraction even when "format" is mp4 with "audio-only" quality.
-    args.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
-    return args;
-  }
-
-  // mp4 capped by quality
+  // mp4 capped by quality. The trailing `best[height<=N]` branch is what
+  // catches itag 18 on stubborn videos; do not remove it.
   const heightCap = videoQualityHeightCap(payload.quality);
   const formatSelector = heightCap
     ? `bestvideo[height<=${heightCap}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${heightCap}][ext=mp4]/best[height<=${heightCap}]`
