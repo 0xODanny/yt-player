@@ -1,0 +1,476 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { createJob, getJob, type JobPayload, type JobStatusResponse } from "@/lib/apiClient";
+import { addItem, type ManifestItem } from "@/lib/library";
+import {
+  formatLength,
+  formatViewCount,
+  pickThumbnail,
+  searchVideos,
+  youtubeWatchUrl,
+  type SearchResult,
+} from "@/lib/search";
+import { type SearchPreset, useSettings } from "@/lib/settings";
+
+import { MediaPlayer } from "./MediaPlayer";
+
+type SearchViewProps = {
+  onLibraryChanged: () => void;
+};
+
+type DownloadState = {
+  videoId: string;
+  jobId?: string;
+  status: "queued" | "processing" | "saving" | "complete" | "failed";
+  progress: number;
+  message?: string;
+};
+
+function presetToJobPayload(preset: SearchPreset): {
+  format: JobPayload["format"];
+  quality: JobPayload["quality"];
+} {
+  switch (preset) {
+    case "video-360p":
+      return { format: "mp4", quality: "360p" };
+    case "video-720p":
+      return { format: "mp4", quality: "720p" };
+    case "video-1080p":
+      return { format: "mp4", quality: "1080p" };
+    case "mp3":
+    default:
+      return { format: "mp3", quality: "best" };
+  }
+}
+
+function presetLabel(preset: SearchPreset): string {
+  switch (preset) {
+    case "video-360p":
+      return "360p video";
+    case "video-720p":
+      return "720p video";
+    case "video-1080p":
+      return "1080p video";
+    case "mp3":
+    default:
+      return "MP3 audio";
+  }
+}
+
+const PRESET_OPTIONS: Array<{ value: SearchPreset; label: string }> = [
+  { value: "mp3", label: "MP3" },
+  { value: "video-360p", label: "360p" },
+  { value: "video-720p", label: "720p" },
+  { value: "video-1080p", label: "1080p" },
+];
+
+export function SearchView({ onLibraryChanged }: SearchViewProps) {
+  const { settings, update } = useSettings();
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [download, setDownload] = useState<DownloadState | null>(null);
+  const [autoPlayItem, setAutoPlayItem] = useState<ManifestItem | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const preset = settings.searchPreset;
+
+  const runSearch = useCallback(
+    async (q: string) => {
+      const trimmed = q.trim();
+      if (!trimmed) {
+        setResults([]);
+        setSearchError(null);
+        return;
+      }
+
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      setSearching(true);
+      setSearchError(null);
+
+      try {
+        const found = await searchVideos(trimmed, { signal: controller.signal });
+        if (!controller.signal.aborted) {
+          setResults(found);
+        }
+      } catch (error) {
+        if ((error as Error).name === "AbortError") {
+          return;
+        }
+        setSearchError(
+          error instanceof Error
+            ? `Search failed: ${error.message}`
+            : "Search failed.",
+        );
+        setResults([]);
+      } finally {
+        if (!controller.signal.aborted) {
+          setSearching(false);
+        }
+      }
+    },
+    [],
+  );
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void runSearch(query);
+  }
+
+  // When a download is in flight, poll the worker every 1.5s for status.
+  useEffect(() => {
+    if (!download?.jobId) {
+      return;
+    }
+    if (download.status === "complete" || download.status === "failed" || download.status === "saving") {
+      return;
+    }
+
+    const jobId = download.jobId;
+    const videoId = download.videoId;
+    let cancelled = false;
+
+    async function poll() {
+      try {
+        const { response, data } = await getJob(jobId);
+        if (cancelled) {
+          return;
+        }
+        if (!response.ok || "error" in data) {
+          const message = "error" in data ? data.error : undefined;
+          setDownload((current) =>
+            current && current.jobId === jobId
+              ? { ...current, status: "failed", message: message ?? "Worker error" }
+              : current,
+          );
+          return;
+        }
+        const next = data as JobStatusResponse;
+        setDownload((current) =>
+          current && current.jobId === jobId
+            ? {
+                ...current,
+                status:
+                  next.status === "complete"
+                    ? "saving"
+                    : next.status === "failed"
+                      ? "failed"
+                      : next.status === "queued"
+                        ? "queued"
+                        : "processing",
+                progress: typeof next.progress === "number" ? next.progress : current.progress,
+                message: next.message,
+              }
+            : current,
+        );
+
+        if (next.status === "complete" && next.downloadUrl) {
+          // Move into "saving" state and fetch the file into the library.
+          try {
+            const fileResponse = await fetch(next.downloadUrl);
+            if (!fileResponse.ok) {
+              throw new Error(`Download failed (${fileResponse.status})`);
+            }
+            const blob = await fileResponse.blob();
+            const result = results.find((r) => r.videoId === videoId);
+            const { format } = presetToJobPayload(preset);
+            const item = await addItem({
+              blob,
+              title: next.metadata?.title || result?.title || "Untitled",
+              sourceUrl: youtubeWatchUrl(videoId),
+              format,
+              quality: presetLabel(preset),
+              duration: next.metadata?.duration ?? result?.lengthSeconds ?? null,
+              thumbnail: next.metadata?.thumbnail || pickThumbnail(result?.thumbnails ?? [], 480)?.url,
+              author: next.metadata?.author || result?.author,
+            });
+            if (!cancelled) {
+              setDownload((current) =>
+                current && current.jobId === jobId
+                  ? { ...current, status: "complete", progress: 100 }
+                  : current,
+              );
+              setAutoPlayItem(item);
+              onLibraryChanged();
+            }
+          } catch (error) {
+            if (!cancelled) {
+              setDownload((current) =>
+                current && current.jobId === jobId
+                  ? {
+                      ...current,
+                      status: "failed",
+                      message:
+                        error instanceof Error
+                          ? `Save failed: ${error.message}`
+                          : "Save failed.",
+                    }
+                  : current,
+              );
+            }
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setDownload((current) =>
+            current && current.jobId === jobId
+              ? { ...current, status: "failed", message: "Network error." }
+              : current,
+          );
+        }
+      }
+    }
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [download?.jobId, download?.status, download?.videoId, results, preset, onLibraryChanged]);
+
+  const handleResultTap = useCallback(
+    async (result: SearchResult) => {
+      if (download && download.status !== "complete" && download.status !== "failed") {
+        return; // single active download for now
+      }
+
+      setDownload({
+        videoId: result.videoId,
+        status: "queued",
+        progress: 0,
+      });
+
+      const url = youtubeWatchUrl(result.videoId);
+      const { format, quality } = presetToJobPayload(preset);
+
+      try {
+        const { response, data } = await createJob({ url, format, quality });
+        if (!response.ok || "error" in data) {
+          const message = "error" in data ? (data as { error?: string }).error : undefined;
+          setDownload({
+            videoId: result.videoId,
+            status: "failed",
+            progress: 0,
+            message: message ?? "Worker rejected the job.",
+          });
+          return;
+        }
+        setDownload({
+          videoId: result.videoId,
+          jobId: (data as { id: string }).id,
+          status: "queued",
+          progress: 0,
+        });
+      } catch (error) {
+        setDownload({
+          videoId: result.videoId,
+          status: "failed",
+          progress: 0,
+          message: error instanceof Error ? error.message : "Network error.",
+        });
+      }
+    },
+    [download, preset],
+  );
+
+  const friendlyMessage = useMemo(() => {
+    if (!download?.message) {
+      return null;
+    }
+    if (
+      download.message.toLowerCase().includes("sign in to confirm") ||
+      download.message.toLowerCase().includes("login_required")
+    ) {
+      return "YouTube blocked this download from the server. Try a different video, or set up a residential proxy / cookies.";
+    }
+    return download.message;
+  }, [download?.message]);
+
+  return (
+    <>
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Search YouTube</h2>
+          <span className="job-id">via Invidious</span>
+        </div>
+
+        <form className="search-form" onSubmit={handleSubmit}>
+          <div className="input-with-clear search-input">
+            <input
+              type="search"
+              value={query}
+              placeholder="Search videos, songs, channels…"
+              onChange={(event) => setQuery(event.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              enterKeyHint="search"
+              inputMode="search"
+            />
+            {query ? (
+              <button
+                type="button"
+                className="input-clear"
+                onClick={() => {
+                  setQuery("");
+                  setResults([]);
+                }}
+                aria-label="Clear search"
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
+
+          <div className="search-presets" role="radiogroup" aria-label="Download quality">
+            {PRESET_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={preset === option.value}
+                className={`folder-chip${preset === option.value ? " active" : ""}`}
+                onClick={() => update("searchPreset", option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="actions">
+            <button type="submit" disabled={searching || !query.trim()}>
+              {searching ? "Searching…" : "Search"}
+            </button>
+            <p className="helper-text">
+              Tap a result to download as {presetLabel(preset)} and play.
+            </p>
+          </div>
+        </form>
+      </section>
+
+      {searchError ? (
+        <section className="panel">
+          <div className="status-card error">
+            <div className="status-row">
+              <strong>Search failed</strong>
+            </div>
+            <p>{searchError}</p>
+          </div>
+        </section>
+      ) : null}
+
+      {results.length > 0 ? (
+        <section className="panel">
+          <div className="section-heading">
+            <h2>Results</h2>
+            <span className="job-id">{results.length} videos</span>
+          </div>
+
+          <ul className="search-list">
+            {results.map((result) => {
+              const thumb = pickThumbnail(result.thumbnails, 360);
+              const length = formatLength(result.lengthSeconds);
+              const views = formatViewCount(result.viewCount);
+              const isThis = download?.videoId === result.videoId;
+              const otherActive =
+                download &&
+                download.videoId !== result.videoId &&
+                download.status !== "complete" &&
+                download.status !== "failed";
+              const isDownloading =
+                isThis &&
+                download?.status !== "complete" &&
+                download?.status !== "failed";
+              const progress = isThis ? Math.round(download?.progress ?? 0) : 0;
+              const stateLabel =
+                isThis &&
+                (download?.status === "queued"
+                  ? "Queued"
+                  : download?.status === "processing"
+                    ? `Downloading ${progress}%`
+                    : download?.status === "saving"
+                      ? "Saving to library"
+                      : download?.status === "complete"
+                        ? "Saved"
+                        : download?.status === "failed"
+                          ? "Failed"
+                          : "");
+              return (
+                <li key={result.videoId} className="search-item">
+                  <button
+                    type="button"
+                    className="search-row"
+                    onClick={() => void handleResultTap(result)}
+                    disabled={Boolean(otherActive) || isDownloading}
+                    title={
+                      otherActive
+                        ? "Wait for the current download to finish"
+                        : `Download as ${presetLabel(preset)}`
+                    }
+                  >
+                    {thumb ? (
+                      <img
+                        className="search-thumb"
+                        src={thumb.url}
+                        alt=""
+                        loading="lazy"
+                      />
+                    ) : (
+                      <span className="search-thumb fallback" aria-hidden>
+                        ▶
+                      </span>
+                    )}
+                    {length ? (
+                      <span className="search-duration">{length}</span>
+                    ) : null}
+                    <span className="search-meta">
+                      <span className="search-title">{result.title}</span>
+                      <span className="search-sub">
+                        {result.author}
+                        {views ? ` · ${views}` : ""}
+                        {result.publishedText ? ` · ${result.publishedText}` : ""}
+                      </span>
+                      {isThis ? (
+                        <span className={`search-state state-${download?.status}`}>
+                          {stateLabel}
+                          {isDownloading && progress > 0 ? (
+                            <span className="search-progress">
+                              <span
+                                className="search-progress-fill"
+                                style={{ width: `${Math.max(2, progress)}%` }}
+                              />
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : null}
+                      {isThis && download?.status === "failed" && friendlyMessage ? (
+                        <span className="search-state-error">{friendlyMessage}</span>
+                      ) : null}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : !searching && query.trim() && !searchError ? (
+        <section className="panel">
+          <div className="empty-card">
+            <p>No results found.</p>
+            <p className="muted-text">Try different keywords.</p>
+          </div>
+        </section>
+      ) : null}
+
+      <MediaPlayer item={autoPlayItem} onClose={() => setAutoPlayItem(null)} />
+    </>
+  );
+}

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef } from "react";
 import {
   SETTING_DEFINITIONS,
   type SettingDefinition,
+  type Settings,
   useSettings,
 } from "@/lib/settings";
 
@@ -80,29 +81,49 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
             <section key={section} className="settings-section">
               <h3 className="settings-section-title">{section}</h3>
               <ul className="settings-list">
-                {defs.map((def) => {
-                  const enabled = Boolean(settings[def.key]);
-                  return (
-                    <li key={def.key} className="settings-row">
-                      <div className="settings-text">
-                        <span className="settings-label">{def.label}</span>
-                        <span className="settings-description">
-                          {def.description}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={enabled}
+                {defs.map((def) => (
+                  <li key={def.key} className="settings-row">
+                    <div className="settings-text">
+                      <span className="settings-label">{def.label}</span>
+                      <span className="settings-description">{def.description}</span>
+                    </div>
+                    {def.type === "select" ? (
+                      <select
+                        className="settings-select"
                         aria-label={def.label}
-                        className={`toggle${enabled ? " on" : ""}`}
-                        onClick={() => update(def.key, !enabled)}
+                        value={String(settings[def.key])}
+                        onChange={(event) =>
+                          update(
+                            def.key,
+                            event.target.value as Settings[typeof def.key],
+                          )
+                        }
                       >
-                        <span className="toggle-thumb" />
-                      </button>
-                    </li>
-                  );
-                })}
+                        {def.options.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      (() => {
+                        const enabled = Boolean(settings[def.key]);
+                        return (
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={enabled}
+                            aria-label={def.label}
+                            className={`toggle${enabled ? " on" : ""}`}
+                            onClick={() => update(def.key, !enabled as never)}
+                          >
+                            <span className="toggle-thumb" />
+                          </button>
+                        );
+                      })()
+                    )}
+                  </li>
+                ))}
               </ul>
             </section>
           ))}

@@ -17,6 +17,7 @@ import {
 import { useSettings } from "@/lib/settings";
 
 import { LibraryView } from "./components/LibraryView";
+import { SearchView } from "./components/SearchView";
 import { SettingsPanel } from "./components/SettingsPanel";
 
 type FormatOption = "mp3" | "mp4";
@@ -237,10 +238,10 @@ function statusToneClass(status: JobStatusResponse["status"] | undefined): strin
   }
 }
 
-type Tab = "downloader" | "library";
+type Tab = "search" | "downloader" | "library";
 
 export default function HomePage() {
-  const [tab, setTab] = useState<Tab>("downloader");
+  const [tab, setTab] = useState<Tab>("search");
   const [url, setUrl] = useState("");
   const [format, setFormat] = useState<FormatOption>("mp3");
   const [quality, setQuality] = useState<QualityOption>("best");
@@ -616,6 +617,15 @@ export default function HomePage() {
         <button
           type="button"
           role="tab"
+          aria-selected={tab === "search"}
+          className={`tab${tab === "search" ? " active" : ""}`}
+          onClick={() => setTab("search")}
+        >
+          Search
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={tab === "downloader"}
           className={`tab${tab === "downloader" ? " active" : ""}`}
           onClick={() => setTab("downloader")}
@@ -632,6 +642,12 @@ export default function HomePage() {
           Library
         </button>
       </nav>
+
+      {tab === "search" ? (
+        <SearchView
+          onLibraryChanged={() => setLibraryReloadKey((current) => current + 1)}
+        />
+      ) : null}
 
       {tab === "library" ? (
         <LibraryView reloadKey={libraryReloadKey} />

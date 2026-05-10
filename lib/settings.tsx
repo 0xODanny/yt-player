@@ -21,11 +21,14 @@ import {
  * No other files need to change to render a new toggle.
  */
 
+export type SearchPreset = "mp3" | "video-360p" | "video-720p" | "video-1080p";
+
 export type Settings = {
   pipAuto: boolean;
   audioOnlyDefault: boolean;
   autoSaveLibrary: boolean;
   confirmDelete: boolean;
+  searchPreset: SearchPreset;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -33,14 +36,27 @@ export const DEFAULT_SETTINGS: Settings = {
   audioOnlyDefault: false,
   autoSaveLibrary: true,
   confirmDelete: true,
+  searchPreset: "mp3",
 };
 
-export type SettingDefinition = {
+export type SettingDefinitionToggle = {
+  type?: "toggle";
   key: keyof Settings;
   label: string;
   description: string;
-  section: "Playback" | "Library";
+  section: "Playback" | "Library" | "Search";
 };
+
+export type SettingDefinitionSelect = {
+  type: "select";
+  key: keyof Settings;
+  label: string;
+  description: string;
+  section: "Playback" | "Library" | "Search";
+  options: Array<{ value: string; label: string }>;
+};
+
+export type SettingDefinition = SettingDefinitionToggle | SettingDefinitionSelect;
 
 export const SETTING_DEFINITIONS: SettingDefinition[] = [
   {
@@ -56,6 +72,20 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     description:
       "Open videos in audio-only mode so playback continues with the screen off and uses less battery. You can still switch to video inside the player.",
     section: "Playback",
+  },
+  {
+    type: "select",
+    key: "searchPreset",
+    label: "Default download from search",
+    description:
+      "Quality used when you tap a result in the Search tab. MP3 audio is fastest and smallest — best for music in the gym.",
+    section: "Search",
+    options: [
+      { value: "mp3", label: "MP3 audio (fastest, smallest)" },
+      { value: "video-360p", label: "Video 360p (data saver)" },
+      { value: "video-720p", label: "Video 720p" },
+      { value: "video-1080p", label: "Video 1080p" },
+    ],
   },
   {
     key: "autoSaveLibrary",
