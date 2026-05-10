@@ -260,6 +260,7 @@ export default function HomePage() {
   const [librarySaveError, setLibrarySaveError] = useState<string | null>(null);
   const [libraryReloadKey, setLibraryReloadKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pasteHint, setPasteHint] = useState<string | null>(null);
   const autoSavedJobIds = useRef<Set<string>>(new Set());
   const { settings } = useSettings();
 
@@ -327,6 +328,89 @@ export default function HomePage() {
     persistRecentJobs([]);
     setRecentJobs([]);
   }, []);
+
+  /**
+   * Read the OS clipboard and, if it looks like an http(s) URL, drop it into
+   * the URL field. iOS PWAs surface a "Allow paste?" popup on each call to
+   * navigator.clipboard.readText(), so we only call this in response to an
+   * explicit user tap on the paste button.
+   *
+   * If `andSubmit` is true, also queue the download immediately — that's the
+   * one-tap "copy link in browser, paste-and-download in PWA" flow people
+   * expect from third-party iOS downloader apps.
+   */
+  const pasteFromClipboard = useCallback(
+    async (andSubmit: boolean) => {
+      setPasteHint(null);
+      if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
+        setPasteHint("Clipboard isn't available in this browser.");
+        return;
+      }
+
+      let text = "";
+      try {
+        text = (await navigator.clipboard.readText()).trim();
+      } catch {
+        setPasteHint("Couldn't read clipboard. Allow paste in the browser prompt.");
+        return;
+      }
+
+      if (!text) {
+        setPasteHint("Clipboard is empty.");
+        return;
+      }
+
+      const classification = classifyUrl(text);
+      if (classification.kind === "invalid" || classification.kind === "empty") {
+        setPasteHint("Clipboard doesn't contain a URL.");
+        return;
+      }
+
+      setUrl(text);
+      setTab("downloader");
+
+      if (!andSubmit) {
+        return;
+      }
+
+      setIsSubmitting(true);
+      setError(null);
+      setJob(null);
+      setLibrarySaveStatus("idle");
+      setLibrarySaveError(null);
+
+      const directMedia = isLikelyDirectMediaUrl(text);
+      const submitFormat: FormatOption = directMedia ? "mp3" : format;
+
+      try {
+        const { response, data } = await createJob({
+          url: text,
+          format: submitFormat,
+          quality,
+        });
+        if (!response.ok) {
+          const message = "error" in data ? data.error : undefined;
+          setError(message ?? "Unable to create job.");
+          return;
+        }
+        const createdJob = data as JobResponse;
+        setJob({ ...createdJob, progress: 0, downloadUrl: undefined });
+        upsertRecentJob({
+          id: createdJob.id,
+          url: text,
+          format: submitFormat,
+          quality,
+          status: createdJob.status,
+          createdAt: Date.now(),
+        });
+      } catch {
+        setError("Network error while creating the job.");
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [format, quality, upsertRecentJob],
+  );
 
   useEffect(() => {
     if (!job?.id || job.status === "complete" || job.status === "failed") {
@@ -592,6 +676,29 @@ export default function HomePage() {
           <span className="topbar-meta-label">{isOnline ? "Online" : "Offline"}</span>
           <button
             type="button"
+            className="topbar-paste"
+            aria-label="Paste link from clipboard and download"
+            title="Paste & download"
+            onClick={() => void pasteFromClipboard(true)}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <rect x="8" y="2" width="8" height="4" rx="1" />
+              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+              <path d="M9 14l2 2 4-4" />
+            </svg>
+          </button>
+          <button
+            type="button"
             className="topbar-gear"
             aria-label="Settings"
             title="Settings"
@@ -687,9 +794,24 @@ export default function HomePage() {
                 >
                   ×
                 </button>
-              ) : null}
+              ) : (
+                <button
+                  type="button"
+                  className="input-paste"
+                  onClick={() => void pasteFromClipboard(false)}
+                  aria-label="Paste from clipboard"
+                  title="Paste"
+                >
+                  Paste
+                </button>
+              )}
             </div>
             <span className={`hint hint-${urlHelper.tone}`}>{urlHelper.text}</span>
+            {pasteHint ? (
+              <span className="hint hint-warning" role="status">
+                {pasteHint}
+              </span>
+            ) : null}
           </label>
 
           <div className="field-grid">

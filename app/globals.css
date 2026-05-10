@@ -136,6 +136,26 @@ code {
   background: rgba(97, 218, 251, 0.05);
 }
 
+.topbar-paste {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(97, 218, 251, 0.4);
+  background: rgba(97, 218, 251, 0.08);
+  color: var(--accent);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.topbar-paste:hover,
+.topbar-paste:active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  border-color: transparent;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;
@@ -1085,6 +1105,12 @@ code {
   padding-right: 44px;
 }
 
+/* When the wider "Paste" button is showing instead of the X, reserve more
+   room so placeholder text doesn't overlap it. */
+.input-with-clear:has(.input-paste) input {
+  padding-right: 80px;
+}
+
 .input-clear {
   position: absolute;
   top: 50%;
@@ -1107,6 +1133,31 @@ code {
 .input-clear:hover {
   color: var(--text);
   background: rgba(152, 167, 194, 0.22);
+}
+
+.input-paste {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(97, 218, 251, 0.4);
+  background: rgba(97, 218, 251, 0.1);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.input-paste:hover,
+.input-paste:active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  border-color: transparent;
 }
 
 /* ── Folder picker modal (move to folder) ──────────── */
