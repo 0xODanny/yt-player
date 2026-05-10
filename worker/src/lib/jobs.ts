@@ -103,13 +103,8 @@ export async function createFakeWorkerJob(payload: JobPayload): Promise<JobCreat
     };
   }
 
-  if (isDirectMediaFileUrl(payload.url) && payload.format !== "mp3") {
-    throw new MetadataExtractionError(
-      "Direct media downloads currently support MP3 requests only.",
-      400,
-    );
-  }
-
+  // Anything not handled by the fast direct-stream path falls through to yt-dlp,
+  // which can transcode (e.g. .mp4 → mp3) and handle generic / streaming sources.
   // yt-dlp metadata + download path
   const extractionResult = await extractJobMetadata(payload.url);
   const normalizedUrl = normalizeMediaSourceUrl(payload.url);
@@ -238,8 +233,33 @@ function pruneExpiredJobs(now: number) {
   }
 }
 
+/**
+ * Take the fast direct-stream path only when the source URL extension already
+ * matches the requested output format. Anything that needs format conversion
+ * (e.g. .mp4 source + mp3 output) is routed through yt-dlp so ffmpeg does the
+ * transcode correctly.
+ */
 function isDirectMediaDownloadRequest(payload: JobPayload) {
-  return payload.format === "mp3" && isDirectMediaFileUrl(payload.url);
+  if (!isDirectMediaFileUrl(payload.url)) {
+    return false;
+  }
+
+  let extension: string;
+  try {
+    extension = path.extname(new URL(payload.url).pathname).toLowerCase();
+  } catch {
+    return false;
+  }
+
+  if (payload.format === "mp3") {
+    return extension === ".mp3" || extension === ".m4a" || extension === ".wav";
+  }
+
+  if (payload.format === "mp4") {
+    return extension === ".mp4" || extension === ".mov";
+  }
+
+  return false;
 }
 
 function normalizeDirectMediaUrl(url: string) {

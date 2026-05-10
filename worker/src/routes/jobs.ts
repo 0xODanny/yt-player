@@ -4,7 +4,6 @@ import { requireWorkerAuth } from "../lib/auth";
 import {
   createFakeWorkerJob,
   getFakeWorkerJobStatus,
-  isDirectMediaFileUrl,
   isMetadataExtractionError,
   isValidMediaSourceUrl,
 } from "../lib/jobs";
@@ -46,10 +45,12 @@ jobsRouter.post("/", async (request, response) => {
 });
 
 jobsRouter.get("/:id", async (request, response) => {
-  // With `app.set("trust proxy", 1)` in index.ts, request.protocol honors
-  // X-Forwarded-Proto so this resolves to https://worker.pepinho.lol behind nginx.
+  // Prefer an explicit WORKER_PUBLIC_URL when set (e.g. https://worker.pepinho.lol).
+  // Falls back to request headers (works locally and behind a proxy that
+  // forwards X-Forwarded-Proto, since `app.set("trust proxy", 1)` is on).
+  const explicitBaseUrl = process.env.WORKER_PUBLIC_URL?.trim().replace(/\/$/, "");
   const host = request.get("host") || `localhost:${process.env.PORT || 3001}`;
-  const baseUrl = `${request.protocol}://${host}`;
+  const baseUrl = explicitBaseUrl || `${request.protocol}://${host}`;
 
   response.json(await getFakeWorkerJobStatus(request.params.id, baseUrl));
 });
@@ -89,13 +90,6 @@ function validateJobPayload(payload: Partial<JobPayload>):
       success: false as const,
       error:
         "Quality must be one of best, 1080p, 720p, 480p, 360p, or audio-only.",
-    };
-  }
-
-  if (isDirectMediaFileUrl(url) && format !== "mp3") {
-    return {
-      success: false as const,
-      error: "Direct media URL downloads currently support MP3 mode only.",
     };
   }
 

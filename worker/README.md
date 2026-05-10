@@ -54,6 +54,8 @@ npm run start:prod
   Shared bearer token required by `POST /jobs` and `GET /jobs/:id`.
 - `ALLOWED_ORIGIN`
   Exact allowed browser origin for CORS.
+- `WORKER_PUBLIC_URL`
+  Optional. Public base URL (e.g. `https://worker.pepinho.lol`) used to build absolute `downloadUrl` values returned to the frontend. Set this in production so the frontend always gets correct `https://` links even if your reverse proxy doesn't forward `X-Forwarded-Proto`.
 - `YT_DLP_BINARY`
   Optional path/name of the `yt-dlp` executable. Defaults to `yt-dlp` (must be on `$PATH`).
 - `FFMPEG_BINARY`
