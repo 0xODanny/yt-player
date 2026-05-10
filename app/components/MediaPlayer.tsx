@@ -4,9 +4,26 @@ import { useEffect, useRef, useState } from "react";
 
 import { getItemObjectUrl, type ManifestItem } from "@/lib/library";
 import { useSettings } from "@/lib/settings";
+import { type StreamSource } from "@/lib/stream";
 
+/**
+ * Either a saved library item (plays from OPFS via a blob URL) OR a live
+ * YouTube stream URL (plays directly from googlevideo.com via HTTP). The
+ * player UX is identical: same controls, same lock-screen integration,
+ * same PiP / audio-only toggles. Caller passes whichever shape they have.
+ */
 type MediaPlayerProps = {
   item: ManifestItem | null;
+  stream?: StreamSource | null;
+  /**
+   * Optional title/author overrides used when `stream` is provided (the
+   * worker doesn't always return a title for adult/non-YouTube sources).
+   */
+  streamMeta?: {
+    title?: string;
+    author?: string;
+    thumbnail?: string;
+  };
   onClose: () => void;
 };
 
@@ -79,7 +96,7 @@ async function exitPip(video: HTMLVideoElement): Promise<void> {
   }
 }
 
-export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
+export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerProps) {
   const { settings } = useSettings();
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,29 +109,67 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
 
+  // Whichever source is set drives the player. `stream` wins if both are
+  // provided, but in practice callers pass exactly one.
+  const playable = stream
+    ? {
+        kind: "stream" as const,
+        id: `stream:${stream.url.slice(0, 32)}`,
+        title: stream.title || streamMeta?.title || "Streaming…",
+        author: stream.author || streamMeta?.author,
+        thumbnail: stream.thumbnail || streamMeta?.thumbnail,
+        type: stream.type,
+        format: (stream.type === "audio" ? "mp3" : "mp4") as "mp3" | "mp4",
+      }
+    : item
+      ? {
+          kind: "library" as const,
+          id: item.id,
+          title: item.title,
+          author: item.author,
+          thumbnail: item.thumbnail,
+          type: item.type,
+          format: item.format,
+        }
+      : null;
+
   // Sync the per-session audio-only with the user's preferred default
-  // each time a new item opens. We only react to item id changes, not to
+  // each time a new playable opens. We only react to id changes, not to
   // settings.audioOnlyDefault changes mid-session, so the user can flip
   // modes inside the player without being yanked back.
   useEffect(() => {
-    if (!item) {
+    if (!playable) {
       return;
     }
     setAudioOnly(settings.audioOnlyDefault);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item?.id]);
+  }, [playable?.id]);
 
   // Audio elements always play with screen off; video elements get
-  // suspended on most platforms when the screen locks. So when item is
+  // suspended on most platforms when the screen locks. So when source is
   // a video AND user enabled audioOnly, render an <audio> element instead
   // of a <video>. iOS Safari and Android Chrome both happily play the
   // audio track of an mp4 via the <audio> tag.
-  const useAudioElement = !!item && (item.type === "audio" || audioOnly);
+  const useAudioElement = !!playable && (playable.type === "audio" || audioOnly);
 
   useEffect(() => {
-    if (!item) {
+    if (!playable) {
       setObjectUrl(null);
       setError(null);
+      return;
+    }
+
+    // Streams already have a directly-playable URL (a googlevideo.com
+    // signed URL); no need to fetch into a blob first. Library items go
+    // through OPFS to produce a blob: URL.
+    if (playable.kind === "stream" && stream) {
+      setObjectUrl(stream.url);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    if (!item) {
       return;
     }
 
@@ -160,10 +215,10 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
         URL.revokeObjectURL(createdUrl);
       }
     };
-  }, [item]);
+  }, [item, playable?.kind, stream]);
 
   useEffect(() => {
-    if (!item) {
+    if (!playable) {
       return;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -173,7 +228,7 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [item, onClose]);
+  }, [playable, onClose]);
 
   // Wire the Media Session API so the lock screen / Control Center /
   // Bluetooth headphones / car play surfaces show now-playing info and
@@ -181,17 +236,17 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
   // actually work — without it, even an <audio> element that keeps
   // playing through screen-lock has no UI for the user to pause/skip.
   useEffect(() => {
-    if (!item || !objectUrl) {
+    if (!playable || !objectUrl) {
       return;
     }
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
       return;
     }
 
-    const artwork = item.thumbnail
+    const artwork = playable.thumbnail
       ? [
           {
-            src: item.thumbnail,
+            src: playable.thumbnail,
             sizes: "512x512",
             // Most YouTube thumbnails are jpg; the browser is forgiving
             // about the declared type for artwork.
@@ -202,9 +257,9 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
 
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
-        title: item.title || "Untitled",
-        artist: item.author || "YT Local Tool",
-        album: item.format.toUpperCase(),
+        title: playable.title || "Untitled",
+        artist: playable.author || "YT Local Tool",
+        album: playable.format.toUpperCase(),
         artwork,
       });
     } catch {
@@ -266,7 +321,7 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
         // best effort
       }
     };
-  }, [item, objectUrl, useAudioElement]);
+  }, [playable, objectUrl, useAudioElement]);
 
   // Reflect playback state to the OS (so the lock-screen widget shows the
   // right play/pause icon).
@@ -410,19 +465,20 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
     }
   }
 
-  if (!item) {
+  if (!playable) {
     return null;
   }
 
-  const showAudioToggle = item.type === "video";
-  const showPipButton = item.type === "video" && !useAudioElement && pipAvailable;
+  const showAudioToggle = playable.type === "video";
+  const showPipButton = playable.type === "video" && !useAudioElement && pipAvailable;
+  const isStreaming = playable.kind === "stream";
 
   return (
     <div
       className="player-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label={`Playing ${item.title}`}
+      aria-label={`Playing ${playable.title}`}
       onClick={(event) => {
         if (event.target === dialogRef.current) {
           onClose();
@@ -432,8 +488,13 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
       <div className="player-dialog" ref={dialogRef}>
         <header className="player-header">
           <div className="player-titles">
-            <h2>{item.title}</h2>
-            {item.author ? <p className="player-sub">{item.author}</p> : null}
+            <h2>{playable.title}</h2>
+            {playable.author ? <p className="player-sub">{playable.author}</p> : null}
+            {isStreaming ? (
+              <p className="player-stream-tag" aria-label="Streaming directly from YouTube">
+                ● Streaming · ad-free
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -469,7 +530,7 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
             </button>
           ) : null}
           <span className="player-toolbar-hint">
-            {item.type === "video"
+            {playable.type === "video"
               ? audioOnly
                 ? "Plays with screen off · saves battery"
                 : settings.pipAuto && pipAvailable
@@ -487,11 +548,11 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
           {!loading && !error && objectUrl ? (
             useAudioElement ? (
               <div className="player-audio-wrap">
-                {item.thumbnail ? (
-                  <img className="player-art" src={item.thumbnail} alt="" />
+                {playable.thumbnail ? (
+                  <img className="player-art" src={playable.thumbnail} alt="" />
                 ) : (
                   <div className="player-art player-art-fallback" aria-hidden>
-                    {item.format.toUpperCase()}
+                    {playable.format.toUpperCase()}
                   </div>
                 )}
                 <audio

@@ -15,6 +15,7 @@ import { filesRouter } from "./routes/files";
 import { healthRouter } from "./routes/health";
 import { jobsRouter } from "./routes/jobs";
 import { searchRouter } from "./routes/search";
+import { streamRouter } from "./routes/stream";
 
 const app = express();
 const port = Number(process.env.PORT || 3001);
@@ -40,6 +41,7 @@ app.use("/health", healthRouter);
 app.use("/files", filesRouter);
 app.use("/jobs", jobsRouter);
 app.use("/search", searchRouter);
+app.use("/stream", streamRouter);
 
 startDownloadCleanupLoop();
 

@@ -989,6 +989,18 @@ code {
   font-size: 0.85rem;
 }
 
+.player-stream-tag {
+  margin: 4px 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
 .player-close {
   flex: 0 0 auto;
   width: 32px;

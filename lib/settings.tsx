@@ -27,7 +27,9 @@ export type SearchPreset =
   | "video-240p"
   | "video-360p"
   | "video-720p"
-  | "video-1080p";
+  | "video-1080p"
+  | "stream-audio"
+  | "stream-video";
 
 export type Settings = {
   pipAuto: boolean;
@@ -82,17 +84,19 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
   {
     type: "select",
     key: "searchPreset",
-    label: "Default download from search",
+    label: "Default action from search",
     description:
-      "Quality used when you tap a result in the Search tab. MP3 audio is fastest and smallest — best for music in the gym.",
+      "What happens when you tap a result in the Search tab. Stream plays a YouTube video directly without saving it (uses your phone's data, ad-free). Download saves the file to the in-app library so you can replay offline.",
     section: "Search",
     options: [
-      { value: "mp3", label: "MP3 audio (~5 MB)" },
-      { value: "video-144p", label: "Video 144p (~12 MB)" },
-      { value: "video-240p", label: "Video 240p (~25 MB)" },
-      { value: "video-360p", label: "Video 360p (~50 MB)" },
-      { value: "video-720p", label: "Video 720p (~80 MB)" },
-      { value: "video-1080p", label: "Video 1080p (~150 MB)" },
+      { value: "stream-audio", label: "Stream audio (no save, ad-free)" },
+      { value: "stream-video", label: "Stream video (no save, ad-free)" },
+      { value: "mp3", label: "Download MP3 (~5 MB)" },
+      { value: "video-144p", label: "Download 144p (~12 MB)" },
+      { value: "video-240p", label: "Download 240p (~25 MB)" },
+      { value: "video-360p", label: "Download 360p (~50 MB)" },
+      { value: "video-720p", label: "Download 720p (~80 MB)" },
+      { value: "video-1080p", label: "Download 1080p (~150 MB)" },
     ],
   },
   {

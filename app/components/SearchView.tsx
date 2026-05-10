@@ -13,6 +13,7 @@ import {
   type SearchResult,
 } from "@/lib/search";
 import { type SearchPreset, useSettings } from "@/lib/settings";
+import { fetchStreamSource, type StreamSource } from "@/lib/stream";
 
 import { MediaPlayer } from "./MediaPlayer";
 
@@ -23,10 +24,14 @@ type SearchViewProps = {
 type DownloadState = {
   videoId: string;
   jobId?: string;
-  status: "queued" | "processing" | "saving" | "complete" | "failed";
+  status: "queued" | "processing" | "saving" | "streaming" | "complete" | "failed";
   progress: number;
   message?: string;
 };
+
+function isStreamPreset(preset: SearchPreset): boolean {
+  return preset === "stream-audio" || preset === "stream-video";
+}
 
 function presetToJobPayload(preset: SearchPreset): {
   format: JobPayload["format"];
@@ -44,6 +49,8 @@ function presetToJobPayload(preset: SearchPreset): {
     case "video-1080p":
       return { format: "mp4", quality: "1080p" };
     case "mp3":
+    case "stream-audio":
+    case "stream-video":
     default:
       return { format: "mp3", quality: "best" };
   }
@@ -61,6 +68,10 @@ function presetLabel(preset: SearchPreset): string {
       return "720p video";
     case "video-1080p":
       return "1080p video";
+    case "stream-audio":
+      return "audio stream";
+    case "stream-video":
+      return "video stream";
     case "mp3":
     default:
       return "MP3 audio";
@@ -68,12 +79,14 @@ function presetLabel(preset: SearchPreset): string {
 }
 
 const PRESET_OPTIONS: Array<{ value: SearchPreset; label: string }> = [
-  { value: "mp3", label: "MP3" },
-  { value: "video-144p", label: "144p" },
-  { value: "video-240p", label: "240p" },
-  { value: "video-360p", label: "360p" },
-  { value: "video-720p", label: "720p" },
-  { value: "video-1080p", label: "1080p" },
+  { value: "stream-audio", label: "▶ Audio" },
+  { value: "stream-video", label: "▶ Video" },
+  { value: "mp3", label: "↓ MP3" },
+  { value: "video-144p", label: "↓ 144p" },
+  { value: "video-240p", label: "↓ 240p" },
+  { value: "video-360p", label: "↓ 360p" },
+  { value: "video-720p", label: "↓ 720p" },
+  { value: "video-1080p", label: "↓ 1080p" },
 ];
 
 export function SearchView({ onLibraryChanged }: SearchViewProps) {
@@ -84,6 +97,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [download, setDownload] = useState<DownloadState | null>(null);
   const [autoPlayItem, setAutoPlayItem] = useState<ManifestItem | null>(null);
+  const [autoPlayStream, setAutoPlayStream] = useState<StreamSource | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const preset = settings.searchPreset;
@@ -248,16 +262,57 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   const handleResultTap = useCallback(
     async (result: SearchResult) => {
       if (download && download.status !== "complete" && download.status !== "failed") {
-        return; // single active download for now
+        return; // single active job at a time
       }
 
+      const url = youtubeWatchUrl(result.videoId);
+
+      // Stream path: ask the worker to resolve a googlevideo.com URL we can
+      // play directly, then open MediaPlayer with that URL. No download,
+      // no library save, no IPRoyal bandwidth (just the tiny metadata
+      // call). Ad-free because we bypass YouTube's player.
+      if (isStreamPreset(preset)) {
+        setDownload({
+          videoId: result.videoId,
+          status: "streaming",
+          progress: 0,
+        });
+        try {
+          const streamType = preset === "stream-audio" ? "audio" : "video";
+          const source = await fetchStreamSource(url, streamType);
+          // Augment with the search result's metadata so the player has
+          // a thumbnail / author even if yt-dlp's --get-url skipped them.
+          setAutoPlayStream({
+            ...source,
+            title: source.title || result.title,
+            author: source.author || result.author,
+            thumbnail:
+              source.thumbnail ||
+              pickThumbnail(result.thumbnails, 480)?.url,
+          });
+          setDownload({
+            videoId: result.videoId,
+            status: "complete",
+            progress: 100,
+          });
+        } catch (error) {
+          setDownload({
+            videoId: result.videoId,
+            status: "failed",
+            progress: 0,
+            message: error instanceof Error ? error.message : "Stream lookup failed.",
+          });
+        }
+        return;
+      }
+
+      // Download path (existing behaviour).
       setDownload({
         videoId: result.videoId,
         status: "queued",
         progress: 0,
       });
 
-      const url = youtubeWatchUrl(result.videoId);
       const { format, quality } = presetToJobPayload(preset);
 
       try {
@@ -408,11 +463,13 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
                     ? `Downloading ${progress}%`
                     : download?.status === "saving"
                       ? "Saving to library"
-                      : download?.status === "complete"
-                        ? "Saved"
-                        : download?.status === "failed"
-                          ? "Failed"
-                          : "");
+                      : download?.status === "streaming"
+                        ? "Resolving stream…"
+                        : download?.status === "complete"
+                          ? isStreamPreset(preset) ? "Streaming" : "Saved"
+                          : download?.status === "failed"
+                            ? "Failed"
+                            : "");
               return (
                 <li key={result.videoId} className="search-item">
                   <button
@@ -480,7 +537,14 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
         </section>
       ) : null}
 
-      <MediaPlayer item={autoPlayItem} onClose={() => setAutoPlayItem(null)} />
+      <MediaPlayer
+        item={autoPlayItem}
+        stream={autoPlayStream}
+        onClose={() => {
+          setAutoPlayItem(null);
+          setAutoPlayStream(null);
+        }}
+      />
     </>
   );
 }

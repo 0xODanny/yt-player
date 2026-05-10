@@ -359,6 +359,129 @@ export async function searchYouTube(
   return results;
 }
 
+export type WorkerStreamResult = {
+  url: string;
+  type: "audio" | "video";
+  title?: string;
+  author?: string;
+  thumbnail?: string;
+  duration?: number | null;
+  /**
+   * yt-dlp's reported expiration of the signed CDN URL (epoch seconds), if
+   * available. The frontend can show "expires in N min" so the user knows
+   * when to re-stream.
+   */
+  expiresAt?: number;
+};
+
+/**
+ * Resolve a YouTube watch URL to a directly-playable signed CDN URL (one
+ * single googlevideo.com link the browser can drop straight into a <video>
+ * or <audio> element). This bypasses YouTube's player entirely, which
+ * means no ads, no "ad blocker detected" warnings, no anti-abuse player
+ * scripts.
+ *
+ * Why ios + tv player clients:
+ *   The signed URL returned by web / web_safari clients embeds the
+ *   *requesting IP* into the signature, so the URL only plays from the
+ *   same IP that asked for it. That breaks our case (worker requests
+ *   the URL via residential proxy, but the user's phone tries to play
+ *   it from their own IP). The ios and tv clients return URLs that
+ *   are *not* IP-bound — same trick used by NewPipe / Invidious.
+ *
+ * Why a single combined format:
+ *   YouTube's adaptive formats are split into separate audio and video
+ *   streams; <video> can't merge them. We force a *progressive* format
+ *   (single combined stream). For YouTube, that's typically itag 18
+ *   (360p mp4 + AAC) or itag 22 (720p mp4 + AAC, less commonly served).
+ *   For audio-only, itag 140 (m4a 128kbps) is the universal pick.
+ */
+export async function getStreamUrl(
+  rawUrl: string,
+  type: "audio" | "video",
+): Promise<WorkerStreamResult> {
+  const normalizedUrl = normalizeMediaSourceUrl(rawUrl);
+  const useProxy = shouldUseProxyForUrl(normalizedUrl);
+
+  // Override the default player_client list: ios+tv specifically because
+  // their signed URLs aren't IP-bound. Pass via --extractor-args directly
+  // here so we don't disturb the global YT_DLP_PLAYER_CLIENTS env var that
+  // downloads/search rely on.
+  const formatSelector =
+    type === "audio"
+      ? "bestaudio[protocol^=https][ext=m4a]/140/bestaudio"
+      : "best[protocol^=https][acodec!=none][vcodec!=none][ext=mp4]/22/18";
+
+  const args = [
+    "--dump-single-json",
+    "--no-playlist",
+    "--no-warnings",
+    "-f",
+    formatSelector,
+    "--extractor-args",
+    "youtube:player_client=ios,tv",
+    ...(YT_DLP_PROXY && useProxy ? ["--proxy", YT_DLP_PROXY] : []),
+    ...(YT_DLP_COOKIES && useProxy ? ["--cookies", YT_DLP_COOKIES] : []),
+    ...(YT_DLP_REMOTE_COMPONENTS
+      ? ["--remote-components", YT_DLP_REMOTE_COMPONENTS]
+      : []),
+    normalizedUrl,
+  ];
+
+  const { stdout } = await execFileAsync(YT_DLP_BINARY, args, {
+    env: buildYtDlpEnv(useProxy),
+    maxBuffer: 8 * 1024 * 1024,
+  });
+
+  const info = JSON.parse(stdout) as YtDlpVideoInfo & {
+    url?: string;
+    requested_formats?: Array<{ url?: string }>;
+    formats?: Array<{ url?: string; protocol?: string; format_id?: string }>;
+  };
+
+  // For progressive formats yt-dlp puts the URL on the top-level `url`.
+  // For separated audio/video it'd put a `requested_formats` array, but our
+  // selector forces progressive so that's a fallback for unusual videos.
+  const directUrl =
+    typeof info.url === "string" && info.url.length > 0
+      ? info.url
+      : info.requested_formats?.[0]?.url;
+
+  if (!directUrl) {
+    throw new Error(
+      "yt-dlp returned no playable single-stream URL for this video.",
+    );
+  }
+
+  // Try to read the URL's expiry hint from its `expire=` query param so
+  // the frontend can warn the user before it goes stale.
+  let expiresAt: number | undefined;
+  try {
+    const parsed = new URL(directUrl);
+    const expiry = parsed.searchParams.get("expire");
+    if (expiry) {
+      const epoch = Number(expiry);
+      if (Number.isFinite(epoch)) {
+        expiresAt = epoch;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return {
+    url: directUrl,
+    type,
+    title: info.title || undefined,
+    author: info.uploader || info.channel,
+    thumbnail: info.thumbnail,
+    duration: Number.isFinite(Number(info.duration))
+      ? Number(info.duration)
+      : null,
+    expiresAt,
+  };
+}
+
 function createJobId(createdAt: number) {
   return `${JOB_ID_PREFIX}_${createdAt}_${randomUUID().slice(0, 8)}`;
 }
