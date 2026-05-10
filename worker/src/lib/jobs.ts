@@ -716,13 +716,62 @@ async function extractJobMetadata(url: string): Promise<{
       throw error;
     }
 
-    const fallbackMetadata = await extractOEmbedMetadata(normalizedUrl);
+    // YouTube URLs have an oEmbed fallback that doesn't go through yt-dlp,
+    // so try that next — same proxy block won't necessarily affect it.
+    let parsedUrl: URL | null = null;
+    try {
+      parsedUrl = new URL(normalizedUrl);
+    } catch {
+      parsedUrl = null;
+    }
+
+    if (parsedUrl && isYouTubeHost(parsedUrl.hostname)) {
+      try {
+        const fallbackMetadata = await extractOEmbedMetadata(normalizedUrl);
+        return {
+          metadata: fallbackMetadata,
+          message: BASIC_METADATA_MESSAGE,
+        };
+      } catch {
+        // fall through to placeholder
+      }
+    }
+
+    // Non-YouTube URLs (or YouTube + dead oEmbed) get a placeholder so the
+    // download can still attempt — yt-dlp's actual download path has its own
+    // retry logic and often succeeds even when --dump-json gets rate-limited
+    // or temporarily blocked. Worst case the download also fails, in which
+    // case the user sees the real download error instead of a blocking
+    // metadata error that prevented us from even trying.
+    const placeholderTitle = parsedUrl
+      ? buildPlaceholderTitle(parsedUrl)
+      : "Untitled media";
 
     return {
-      metadata: fallbackMetadata,
+      metadata: {
+        title: placeholderTitle,
+        duration: null,
+        formats: [],
+      },
       message: BASIC_METADATA_MESSAGE,
     };
   }
+}
+
+function buildPlaceholderTitle(parsedUrl: URL): string {
+  // Trim path and use last meaningful segment so the user sees something
+  // recognizable in the UI (e.g. /video/abc123 → "abc123") rather than the
+  // raw URL.
+  const segments = parsedUrl.pathname.split("/").filter(Boolean);
+  const last = segments[segments.length - 1] ?? "";
+  const decoded = decodeURIComponent(last)
+    .replace(/[-_]+/g, " ")
+    .replace(/\.[a-z0-9]{2,5}$/i, "")
+    .trim();
+  if (decoded.length > 2) {
+    return `${decoded} — ${parsedUrl.hostname}`;
+  }
+  return parsedUrl.hostname;
 }
 
 function isPlaylistUrl(url: URL) {
