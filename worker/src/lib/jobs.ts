@@ -241,6 +241,120 @@ export function isMetadataExtractionError(error: unknown): error is MetadataExtr
   return error instanceof MetadataExtractionError;
 }
 
+export type WorkerSearchResult = {
+  videoId: string;
+  title: string;
+  author?: string;
+  authorId?: string;
+  lengthSeconds?: number;
+  viewCount?: number;
+  description?: string;
+  thumbnail?: string;
+  publishedText?: string;
+};
+
+/**
+ * Run a YouTube search through yt-dlp's `ytsearch` URL prefix. This rides on
+ * our existing proxy (so the worker's flagged datacenter IP doesn't see the
+ * search either) and skips the Invidious dependency entirely — public
+ * Invidious instances have largely been killed by YouTube anti-abuse and
+ * are no longer reliable for search.
+ *
+ * yt-dlp's --flat-playlist mode returns just metadata for each result rather
+ * than fetching the full info JSON for each video, so a 20-result search
+ * runs in 1-3 seconds instead of 20-60.
+ */
+export async function searchYouTube(
+  query: string,
+  limit = 20,
+): Promise<WorkerSearchResult[]> {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const safeLimit = Math.max(1, Math.min(50, Math.floor(limit) || 20));
+  const searchSpec = `ytsearch${safeLimit}:${trimmed}`;
+
+  const args = [
+    "--dump-json",
+    "--flat-playlist",
+    "--no-warnings",
+    ...buildYtDlpAntiBotArgs(),
+    searchSpec,
+  ];
+
+  let stdout = "";
+  try {
+    const result = await execFileAsync(YT_DLP_BINARY, args, {
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    stdout = result.stdout ?? "";
+  } catch (error) {
+    // yt-dlp can write valid JSON lines to stdout AND error out at the end
+    // (e.g. one entry failed). Surface partial results when possible.
+    const child = error as { stdout?: string };
+    if (child && typeof child.stdout === "string" && child.stdout.length > 0) {
+      stdout = child.stdout;
+    } else {
+      throw error;
+    }
+  }
+
+  const lines = stdout.split(/\r?\n/).filter((line) => line.trim().length > 0);
+
+  const results: WorkerSearchResult[] = [];
+  for (const line of lines) {
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+
+    const id = String(entry.id ?? entry.video_id ?? "").trim();
+    const title = String(entry.title ?? "").trim();
+    if (!id || !title) {
+      continue;
+    }
+
+    const duration =
+      typeof entry.duration === "number"
+        ? Math.round(entry.duration)
+        : typeof entry.duration === "string"
+          ? Number(entry.duration) || undefined
+          : undefined;
+
+    const viewCount =
+      typeof entry.view_count === "number" ? entry.view_count : undefined;
+
+    const thumbnail =
+      typeof entry.thumbnail === "string"
+        ? entry.thumbnail
+        : `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+
+    results.push({
+      videoId: id,
+      title,
+      author:
+        typeof entry.uploader === "string"
+          ? entry.uploader
+          : typeof entry.channel === "string"
+            ? entry.channel
+            : undefined,
+      authorId:
+        typeof entry.channel_id === "string" ? entry.channel_id : undefined,
+      lengthSeconds: duration,
+      viewCount,
+      description:
+        typeof entry.description === "string" ? entry.description : undefined,
+      thumbnail,
+    });
+  }
+
+  return results;
+}
+
 function createJobId(createdAt: number) {
   return `${JOB_ID_PREFIX}_${createdAt}_${randomUUID().slice(0, 8)}`;
 }

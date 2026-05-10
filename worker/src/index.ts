@@ -14,6 +14,7 @@ import { startDownloadCleanupLoop } from "./lib/storage";
 import { filesRouter } from "./routes/files";
 import { healthRouter } from "./routes/health";
 import { jobsRouter } from "./routes/jobs";
+import { searchRouter } from "./routes/search";
 
 const app = express();
 const port = Number(process.env.PORT || 3001);
@@ -38,6 +39,7 @@ app.options("*", cors(corsOptions));
 app.use("/health", healthRouter);
 app.use("/files", filesRouter);
 app.use("/jobs", jobsRouter);
+app.use("/search", searchRouter);
 
 startDownloadCleanupLoop();
 

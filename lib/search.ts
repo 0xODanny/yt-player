@@ -1,12 +1,10 @@
 /**
- * YouTube search via Invidious — open-source YouTube API mirrors that don't
- * require a Google Cloud project or API key. We fetch the live list of healthy
- * public instances from api.invidious.io, cache it for an hour, and try each
- * one in order until a search succeeds. This gives us "search just works" UX
- * without users having to set up anything in Google Cloud.
- *
- * If all instances fail (rare but possible during YouTube API churn), the
- * caller gets a clear error and can fall back to manual URL entry.
+ * YouTube search via our own worker. Public Invidious instances became
+ * unreliable (rate-limited, CORS-broken, or shut down outright by their
+ * operators), so we route search through the worker — which already has a
+ * proxy pipeline (Cloudflare WARP / residential) and yt-dlp installed. This
+ * gives us a stable search path and reuses the same anti-bot setup the
+ * downloader uses, so search results match what we can actually download.
  */
 
 export type SearchResultThumbnail = {
@@ -27,170 +25,108 @@ export type SearchResult = {
   publishedText?: string;
 };
 
-type RawInvidiousResult = {
-  type?: string;
-  videoId?: string;
-  title?: string;
-  author?: string;
-  authorId?: string;
-  lengthSeconds?: number;
-  viewCount?: number;
-  description?: string;
-  videoThumbnails?: SearchResultThumbnail[];
-  publishedText?: string;
+type WorkerSearchPayload = {
+  results: Array<{
+    videoId: string;
+    title: string;
+    author?: string;
+    authorId?: string;
+    lengthSeconds?: number;
+    viewCount?: number;
+    description?: string;
+    thumbnail?: string;
+    publishedText?: string;
+  }>;
+  error?: string;
 };
 
-type RawInstanceEntry = [
-  string,
-  {
-    api?: boolean;
-    cors?: boolean;
-    type?: string;
-    uri?: string;
-    monitor?: { dailyRatios?: Array<{ ratio?: string }> };
-  },
-];
-
-const INSTANCES_URL = "https://api.invidious.io/instances.json?sort_by=health";
-const INSTANCES_CACHE_KEY = "yt-local-tool:invidious-instances";
-const INSTANCES_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
-
-// Hardcoded fallbacks if api.invidious.io is itself unreachable. These get
-// rotated by the community, so the live list is preferred.
-const HARDCODED_INSTANCES = [
-  "https://invidious.nerdvpn.de",
-  "https://yewtu.be",
-  "https://invidious.privacydev.net",
-  "https://invidious.protokolla.fi",
-  "https://invidious.lunar.icu",
-];
-
-type InstanceCache = {
-  fetchedAt: number;
-  instances: string[];
+type EndpointConfig = {
+  url: string;
+  isExternal: boolean;
 };
 
-function readInstanceCache(): InstanceCache | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  try {
-    const raw = window.localStorage.getItem(INSTANCES_CACHE_KEY);
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw) as InstanceCache;
-    if (Date.now() - parsed.fetchedAt > INSTANCES_CACHE_TTL_MS) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function writeInstanceCache(instances: string[]): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    const payload: InstanceCache = { fetchedAt: Date.now(), instances };
-    window.localStorage.setItem(INSTANCES_CACHE_KEY, JSON.stringify(payload));
-  } catch {
-    // ignore quota errors
-  }
-}
-
-async function fetchLiveInstances(signal?: AbortSignal): Promise<string[]> {
-  const response = await fetch(INSTANCES_URL, { signal });
-  if (!response.ok) {
-    throw new Error(`Failed to load Invidious instance list (${response.status})`);
-  }
-  const data = (await response.json()) as RawInstanceEntry[];
-  return data
-    .filter(
-      ([, info]) =>
-        info?.type === "https" && info?.api === true && info?.cors === true && Boolean(info?.uri),
-    )
-    .map(([, info]) => (info.uri ?? "").replace(/\/$/, ""))
-    .filter(Boolean)
-    .slice(0, 8);
-}
-
-export async function getInstances(signal?: AbortSignal): Promise<string[]> {
-  const cached = readInstanceCache();
-  if (cached && cached.instances.length > 0) {
-    return cached.instances;
-  }
-  try {
-    const live = await fetchLiveInstances(signal);
-    if (live.length > 0) {
-      writeInstanceCache(live);
-      return live;
-    }
-  } catch {
-    // fall through to hardcoded list
-  }
-  return HARDCODED_INSTANCES;
-}
-
-function normalizeRaw(raw: RawInvidiousResult): SearchResult | null {
-  if (!raw.videoId || !raw.title) {
-    return null;
+function getSearchEndpoint(): EndpointConfig {
+  const workerUrl = process.env.NEXT_PUBLIC_WORKER_API_URL?.trim();
+  if (!workerUrl) {
+    return {
+      url: "/api/search",
+      isExternal: false,
+    };
   }
   return {
-    videoId: raw.videoId,
-    title: raw.title,
-    author: raw.author,
-    authorId: raw.authorId,
-    lengthSeconds: typeof raw.lengthSeconds === "number" ? raw.lengthSeconds : undefined,
-    viewCount: typeof raw.viewCount === "number" ? raw.viewCount : undefined,
-    description: raw.description,
-    thumbnails: Array.isArray(raw.videoThumbnails) ? raw.videoThumbnails : [],
-    publishedText: raw.publishedText,
+    url: `${workerUrl.replace(/\/$/, "")}/search`,
+    isExternal: true,
   };
+}
+
+function getRequestHeaders(isExternal: boolean): HeadersInit {
+  const headers: HeadersInit = {
+    Accept: "application/json",
+  };
+  if (!isExternal) {
+    return headers;
+  }
+  const apiKey = process.env.NEXT_PUBLIC_WORKER_API_KEY?.trim();
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+  return headers;
 }
 
 export type SearchOptions = {
   signal?: AbortSignal;
+  limit?: number;
 };
 
 export async function searchVideos(
   query: string,
-  { signal }: SearchOptions = {},
+  { signal, limit = 20 }: SearchOptions = {},
 ): Promise<SearchResult[]> {
   const trimmed = query.trim();
   if (!trimmed) {
     return [];
   }
 
-  const instances = await getInstances(signal);
-  let lastError: Error | null = null;
+  const endpoint = getSearchEndpoint();
+  const url = new URL(endpoint.url, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  url.searchParams.set("q", trimmed);
+  url.searchParams.set("limit", String(limit));
 
-  for (const baseUrl of instances) {
-    try {
-      const url = `${baseUrl}/api/v1/search?q=${encodeURIComponent(trimmed)}&type=video`;
-      const response = await fetch(url, { signal });
-      if (!response.ok) {
-        lastError = new Error(`${baseUrl} returned ${response.status}`);
-        continue;
-      }
-      const data = (await response.json()) as RawInvidiousResult[];
-      const results = data
-        .filter((entry) => entry.type === "video" || (!entry.type && entry.videoId))
-        .map(normalizeRaw)
-        .filter((entry): entry is SearchResult => entry !== null);
-      return results;
-    } catch (error) {
-      if ((error as Error).name === "AbortError") {
-        throw error;
-      }
-      lastError = error instanceof Error ? error : new Error(String(error));
-      continue;
-    }
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: getRequestHeaders(endpoint.isExternal),
+    signal,
+  });
+
+  let body: WorkerSearchPayload | null = null;
+  try {
+    body = (await response.json()) as WorkerSearchPayload;
+  } catch {
+    body = null;
   }
 
-  throw lastError ?? new Error("All search providers are unreachable.");
+  if (!response.ok) {
+    const message = body?.error || `Search failed (${response.status})`;
+    throw new Error(message);
+  }
+
+  if (!body || !Array.isArray(body.results)) {
+    return [];
+  }
+
+  return body.results.map((entry) => ({
+    videoId: entry.videoId,
+    title: entry.title,
+    author: entry.author,
+    authorId: entry.authorId,
+    lengthSeconds: entry.lengthSeconds,
+    viewCount: entry.viewCount,
+    description: entry.description,
+    publishedText: entry.publishedText,
+    thumbnails: entry.thumbnail
+      ? [{ url: entry.thumbnail, width: 480, height: 360 }]
+      : [],
+  }));
 }
 
 /**
