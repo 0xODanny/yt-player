@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
-import { execFile } from "child_process";
-import { open, unlink } from "fs/promises";
+import { execFile, spawn } from "child_process";
+import { open, readdir, unlink } from "fs/promises";
 import path from "path";
 import { promisify } from "util";
 
@@ -16,11 +16,14 @@ import type {
 const execFileAsync = promisify(execFile);
 
 const JOB_ID_PREFIX = "job";
-const QUEUED_WINDOW_MS = 2_000;
-const PROCESSING_WINDOW_MS = 5_000;
-const TOTAL_DURATION_MS = QUEUED_WINDOW_MS + PROCESSING_WINDOW_MS;
 const METADATA_RETENTION_MS = 15 * 60 * 1_000;
 const YT_DLP_BINARY = process.env.YT_DLP_BINARY?.trim() || "yt-dlp";
+const FFMPEG_BINARY = process.env.FFMPEG_BINARY?.trim() || "ffmpeg";
+
+// Two-hour file retention is enforced inside ./storage.
+// We keep job records for the same window so the API can still answer.
+const JOB_RECORD_RETENTION_MS = 2 * 60 * 60 * 1_000;
+
 const SUPPORTED_DIRECT_MEDIA_EXTENSIONS = new Set([
   ".mp4",
   ".mov",
@@ -30,13 +33,10 @@ const SUPPORTED_DIRECT_MEDIA_EXTENSIONS = new Set([
   ".m4a",
 ]);
 
-type StoredJobMetadata = {
-  metadata: JobMetadata;
-  storedAt: number;
-  message?: string;
-};
+type JobKind = "yt-dlp" | "direct";
 
-type StoredDirectDownloadJob = {
+type StoredJob = {
+  kind: JobKind;
   createdAt: number;
   status: JobStatus;
   progress: number;
@@ -45,9 +45,10 @@ type StoredDirectDownloadJob = {
   filename?: string;
 };
 
-const jobMetadataStore = new Map<string, StoredJobMetadata>();
-const directDownloadJobStore = new Map<string, StoredDirectDownloadJob>();
-const BASIC_METADATA_MESSAGE = "Detailed media formats are unavailable, but basic metadata was loaded.";
+const jobStore = new Map<string, StoredJob>();
+
+const BASIC_METADATA_MESSAGE =
+  "Detailed media formats are unavailable, but basic metadata was loaded.";
 
 class MetadataExtractionError extends Error {
   constructor(
@@ -65,14 +66,16 @@ export async function createFakeWorkerJob(payload: JobPayload): Promise<JobCreat
 
   await ensureDownloadsDir();
   await cleanupExpiredDownloads(createdAt);
-  pruneExpiredDirectJobs(createdAt);
+  pruneExpiredJobs(createdAt);
 
+  // Direct media file URL path (no yt-dlp)
   if (isDirectMediaDownloadRequest(payload)) {
     const normalizedUrl = normalizeDirectMediaUrl(payload.url);
-    const filename = buildDirectDownloadFilename(id, normalizedUrl);
+    const filename = buildOutputFilename(id, path.extname(new URL(normalizedUrl).pathname));
     const metadata = buildDirectMediaMetadata(normalizedUrl);
 
-    directDownloadJobStore.set(id, {
+    jobStore.set(id, {
+      kind: "direct",
       createdAt,
       status: "queued",
       progress: 0,
@@ -98,14 +101,20 @@ export async function createFakeWorkerJob(payload: JobPayload): Promise<JobCreat
     );
   }
 
+  // yt-dlp metadata + download path
   const extractionResult = await extractJobMetadata(payload.url);
+  const normalizedUrl = normalizeMediaSourceUrl(payload.url);
 
-  pruneExpiredMetadata(createdAt);
-  jobMetadataStore.set(id, {
+  jobStore.set(id, {
+    kind: "yt-dlp",
+    createdAt,
+    status: "queued",
+    progress: 0,
+    message: extractionResult.message ?? "Worker job queued.",
     metadata: extractionResult.metadata,
-    storedAt: createdAt,
-    message: extractionResult.message,
   });
+
+  void runYtDlpDownload(id, normalizedUrl, payload);
 
   return {
     id,
@@ -119,69 +128,31 @@ export async function getFakeWorkerJobStatus(
   jobId: string,
   baseUrl: string,
 ): Promise<JobStatusResponse> {
-  const directJob = directDownloadJobStore.get(jobId);
+  const job = jobStore.get(jobId);
 
-  if (directJob) {
-    await cleanupExpiredDownloads();
-
-    return {
-      id: jobId,
-      status: directJob.status,
-      progress: directJob.progress,
-      message: directJob.message,
-      metadata: directJob.metadata,
-      downloadUrl:
-        directJob.status === "complete" && directJob.filename
-          ? new URL(`/files/${directJob.filename}`, baseUrl).toString()
-          : undefined,
-    };
-  }
-
-  const createdAt = getCreatedAtFromJobId(jobId);
-  const metadata = getStoredMetadata(jobId);
-  const messageOverride = getStoredMessage(jobId);
-
-  if (!createdAt) {
+  if (!job) {
     return {
       id: jobId,
       status: "failed",
       progress: 0,
-      message: messageOverride ?? "Invalid worker job id.",
-      metadata,
+      message: "Worker job is unknown or has expired.",
+      metadata: { title: "Unknown media", duration: null, formats: [] },
     };
   }
 
-  await cleanupExpiredDownloads();
-  const elapsedMs = Math.max(0, Date.now() - createdAt);
-
-  if (elapsedMs < QUEUED_WINDOW_MS) {
-    return {
-      id: jobId,
-      status: "queued",
-      progress: clampProgress(Math.floor((elapsedMs / QUEUED_WINDOW_MS) * 20)),
-      message: messageOverride ?? "Worker job queued.",
-      metadata,
-    };
-  }
-
-  if (elapsedMs < TOTAL_DURATION_MS) {
-    return {
-      id: jobId,
-      status: "processing",
-      progress: clampProgress(
-        21 + Math.floor(((elapsedMs - QUEUED_WINDOW_MS) / PROCESSING_WINDOW_MS) * 78),
-      ),
-      message: messageOverride ?? "Worker job processing.",
-      metadata,
-    };
-  }
+  // Light cleanup on read, but never block.
+  void cleanupExpiredDownloads();
 
   return {
     id: jobId,
-    status: "complete",
-    progress: 100,
-    message: messageOverride ?? "Worker job complete.",
-    metadata,
+    status: job.status,
+    progress: job.progress,
+    message: job.message,
+    metadata: job.metadata,
+    downloadUrl:
+      job.status === "complete" && job.filename
+        ? new URL(`/files/${encodeURIComponent(job.filename)}`, baseUrl).toString()
+        : undefined,
   };
 }
 
@@ -246,50 +217,14 @@ function createJobId(createdAt: number) {
   return `${JOB_ID_PREFIX}_${createdAt}_${randomUUID().slice(0, 8)}`;
 }
 
-function getCreatedAtFromJobId(jobId: string) {
-  const match = new RegExp(`^${JOB_ID_PREFIX}_(\\d+)_`).exec(jobId);
-
-  if (!match) {
-    return null;
-  }
-
-  const createdAt = Number(match[1]);
-
-  if (!Number.isFinite(createdAt)) {
-    return null;
-  }
-
-  return createdAt;
-}
-
 function clampProgress(value: number) {
   return Math.max(0, Math.min(100, value));
 }
 
-function getStoredMetadata(jobId: string): JobMetadata {
-  return jobMetadataStore.get(jobId)?.metadata ?? {
-    title: "Unknown media",
-    duration: null,
-    formats: [],
-  };
-}
-
-function getStoredMessage(jobId: string) {
-  return jobMetadataStore.get(jobId)?.message;
-}
-
-function pruneExpiredMetadata(now: number) {
-  for (const [jobId, record] of jobMetadataStore.entries()) {
-    if (now - record.storedAt > METADATA_RETENTION_MS) {
-      jobMetadataStore.delete(jobId);
-    }
-  }
-}
-
-function pruneExpiredDirectJobs(now: number) {
-  for (const [jobId, record] of directDownloadJobStore.entries()) {
-    if (now - record.createdAt > METADATA_RETENTION_MS) {
-      directDownloadJobStore.delete(jobId);
+function pruneExpiredJobs(now: number) {
+  for (const [jobId, record] of jobStore.entries()) {
+    if (now - record.createdAt > JOB_RECORD_RETENTION_MS) {
+      jobStore.delete(jobId);
     }
   }
 }
@@ -320,11 +255,10 @@ function normalizeDirectMediaUrl(url: string) {
   return parsedUrl.toString();
 }
 
-function buildDirectDownloadFilename(jobId: string, url: string) {
-  const extension = path.extname(new URL(url).pathname).toLowerCase() || ".bin";
+function buildOutputFilename(jobId: string, extension: string) {
   const safeJobId = jobId.replace(/[^a-zA-Z0-9_-]/g, "_");
-
-  return `${safeJobId}${extension}`;
+  const safeExt = extension && extension.startsWith(".") ? extension.toLowerCase() : ".bin";
+  return `${safeJobId}${safeExt}`;
 }
 
 function buildDirectMediaMetadata(url: string): JobMetadata {
@@ -343,7 +277,7 @@ async function downloadDirectMediaJob(jobId: string, normalizedUrl: string, file
   let fileHandle: Awaited<ReturnType<typeof open>> | null = null;
 
   try {
-    updateDirectDownloadJob(jobId, {
+    updateJob(jobId, {
       status: "processing",
       progress: 1,
       message: "Worker job processing.",
@@ -372,14 +306,14 @@ async function downloadDirectMediaJob(jobId: string, normalizedUrl: string, file
       downloadedBytes += value.byteLength;
 
       if (totalBytes > 0) {
-        updateDirectDownloadJob(jobId, {
+        updateJob(jobId, {
           status: "processing",
           progress: clampProgress(Math.min(99, Math.floor((downloadedBytes / totalBytes) * 100))),
           message: "Worker job processing.",
         });
       } else {
         fallbackProgress = Math.min(95, fallbackProgress + 10);
-        updateDirectDownloadJob(jobId, {
+        updateJob(jobId, {
           status: "processing",
           progress: fallbackProgress,
           message: "Worker job processing.",
@@ -390,7 +324,7 @@ async function downloadDirectMediaJob(jobId: string, normalizedUrl: string, file
     await fileHandle.close();
     fileHandle = null;
 
-    updateDirectDownloadJob(jobId, {
+    updateJob(jobId, {
       status: "complete",
       progress: 100,
       message: "Worker job complete.",
@@ -401,7 +335,7 @@ async function downloadDirectMediaJob(jobId: string, normalizedUrl: string, file
     }
 
     await unlink(filePath).catch(() => undefined);
-    updateDirectDownloadJob(jobId, {
+    updateJob(jobId, {
       status: "failed",
       progress: 0,
       message: "Unable to download direct media file.",
@@ -409,18 +343,223 @@ async function downloadDirectMediaJob(jobId: string, normalizedUrl: string, file
   }
 }
 
-function updateDirectDownloadJob(
-  jobId: string,
-  updates: Partial<StoredDirectDownloadJob>,
-) {
-  const currentJob = directDownloadJobStore.get(jobId);
+function buildYtDlpFormatArgs(payload: JobPayload): string[] {
+  const args: string[] = [];
 
-  if (!currentJob) {
+  if (payload.format === "mp3") {
+    args.push(
+      "-x",
+      "--audio-format",
+      "mp3",
+      "--audio-quality",
+      "0",
+    );
+    return args;
+  }
+
+  if (payload.quality === "audio-only") {
+    // Force mp3 audio extraction even when "format" is mp4 with "audio-only" quality.
+    args.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
+    return args;
+  }
+
+  // mp4 capped by quality
+  const heightCap = videoQualityHeightCap(payload.quality);
+  const formatSelector = heightCap
+    ? `bestvideo[height<=${heightCap}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${heightCap}][ext=mp4]/best[height<=${heightCap}]`
+    : "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best";
+
+  args.push("-f", formatSelector, "--merge-output-format", "mp4");
+  return args;
+}
+
+function videoQualityHeightCap(quality: JobPayload["quality"]): number | null {
+  switch (quality) {
+    case "1080p":
+      return 1080;
+    case "720p":
+      return 720;
+    case "480p":
+      return 480;
+    case "360p":
+      return 360;
+    default:
+      return null;
+  }
+}
+
+async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: JobPayload) {
+  // We let yt-dlp pick the final extension via `%(ext)s` so audio extraction
+  // (mp3) and merged video (mp4) both end up with the right filename.
+  const safeJobId = jobId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const outputTemplate = path.join(DOWNLOADS_DIR, `${safeJobId}.%(ext)s`);
+
+  const formatArgs = buildYtDlpFormatArgs(payload);
+
+  const args = [
+    ...formatArgs,
+    "--no-playlist",
+    "--no-part",
+    "--no-mtime",
+    "--newline",
+    "--progress",
+    "--no-warnings",
+    "--ffmpeg-location",
+    FFMPEG_BINARY,
+    "-o",
+    outputTemplate,
+    normalizedUrl,
+  ];
+
+  updateJob(jobId, {
+    status: "processing",
+    progress: 1,
+    message: "Worker job processing.",
+  });
+
+  const child = spawn(YT_DLP_BINARY, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let stderrBuffer = "";
+
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+
+  const handleLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const progress = parseYtDlpProgress(trimmed);
+    if (progress !== null) {
+      updateJob(jobId, {
+        status: "processing",
+        progress: clampProgress(Math.min(99, progress)),
+        message: "Worker job processing.",
+      });
+    }
+  };
+
+  let stdoutCarry = "";
+  child.stdout.on("data", (chunk: string) => {
+    const combined = stdoutCarry + chunk;
+    const lines = combined.split(/\r?\n|\r/);
+    stdoutCarry = lines.pop() ?? "";
+    for (const line of lines) {
+      handleLine(line);
+    }
+  });
+
+  child.stderr.on("data", (chunk: string) => {
+    stderrBuffer += chunk;
+    if (stderrBuffer.length > 16_000) {
+      stderrBuffer = stderrBuffer.slice(-16_000);
+    }
+  });
+
+  child.on("error", () => {
+    updateJob(jobId, {
+      status: "failed",
+      progress: 0,
+      message:
+        "yt-dlp is not installed on the worker. Install yt-dlp (and ffmpeg for audio/video merging).",
+    });
+  });
+
+  child.on("close", async (code) => {
+    if (stdoutCarry) {
+      handleLine(stdoutCarry);
+      stdoutCarry = "";
+    }
+
+    if (code !== 0) {
+      const reason = extractYtDlpError(stderrBuffer);
+      updateJob(jobId, {
+        status: "failed",
+        progress: 0,
+        message: reason ?? "yt-dlp failed to download this media.",
+      });
+      return;
+    }
+
+    try {
+      const filename = await findDownloadedFilename(safeJobId);
+
+      if (!filename) {
+        updateJob(jobId, {
+          status: "failed",
+          progress: 0,
+          message: "Download finished but the output file is missing.",
+        });
+        return;
+      }
+
+      updateJob(jobId, {
+        status: "complete",
+        progress: 100,
+        message: "Worker job complete.",
+        filename,
+      });
+    } catch {
+      updateJob(jobId, {
+        status: "failed",
+        progress: 0,
+        message: "Download finished but the output file could not be located.",
+      });
+    }
+  });
+}
+
+function parseYtDlpProgress(line: string): number | null {
+  // Matches "[download]   12.3% of ..." or "100%"
+  const match = /\[download\]\s+([\d.]+)%/i.exec(line);
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? Math.floor(value) : null;
+}
+
+function extractYtDlpError(stderr: string): string | null {
+  if (!stderr) {
+    return null;
+  }
+  const lines = stderr.split(/\r?\n/).filter(Boolean);
+  // Prefer the last "ERROR:" line for relevance.
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (/^error[: ]/i.test(line)) {
+      return line.replace(/^error[: ]\s*/i, "").slice(0, 240);
+    }
+  }
+  return lines[lines.length - 1]?.slice(0, 240) ?? null;
+}
+
+async function findDownloadedFilename(safeJobId: string): Promise<string | null> {
+  const entries = await readdir(DOWNLOADS_DIR);
+  // Prefer mp3/mp4 extensions, fall back to anything starting with the job id.
+  const matches = entries.filter((entry) => entry.startsWith(`${safeJobId}.`));
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const preferred = matches.find((entry) =>
+    [".mp3", ".mp4", ".m4a", ".webm"].includes(path.extname(entry).toLowerCase()),
+  );
+
+  return preferred ?? matches[0];
+}
+
+function updateJob(jobId: string, updates: Partial<StoredJob>) {
+  const current = jobStore.get(jobId);
+  if (!current) {
     return;
   }
 
-  directDownloadJobStore.set(jobId, {
-    ...currentJob,
+  jobStore.set(jobId, {
+    ...current,
     ...updates,
   });
 }
@@ -458,6 +597,7 @@ async function extractJobMetadata(url: string): Promise<{
           hasVideo: format.vcodec !== "none",
         })),
         thumbnail: info.thumbnail,
+        author: info.uploader || info.channel,
       },
     };
   } catch (error) {
@@ -498,6 +638,8 @@ type YtDlpVideoInfo = {
   thumbnail?: string;
   formats?: YtDlpVideoFormat[];
   entries?: unknown[];
+  uploader?: string;
+  channel?: string;
 };
 
 type YouTubeOEmbedResponse = {

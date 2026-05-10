@@ -3,5 +3,11 @@ node_modules
 downloads/*
 !downloads/.gitkeep
 .env.local
+.env*.local
 npm-debug.log*
 worker/dist
+worker/.env
+worker/.env.*
+!worker/.env.example
+.DS_Store
+*.tsbuildinfo

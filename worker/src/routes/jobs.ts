@@ -11,7 +11,14 @@ import {
 import type { JobPayload } from "../types/jobs";
 
 const allowedFormats = new Set(["mp3", "mp4"]);
-const allowedQualities = new Set(["best", "1080p", "720p", "audio-only"]);
+const allowedQualities = new Set([
+  "best",
+  "1080p",
+  "720p",
+  "480p",
+  "360p",
+  "audio-only",
+]);
 
 const jobsRouter = Router();
 
@@ -39,10 +46,10 @@ jobsRouter.post("/", async (request, response) => {
 });
 
 jobsRouter.get("/:id", async (request, response) => {
-  const forwardedProto = request.header("x-forwarded-proto")?.split(",")[0]?.trim();
-  const protocol = forwardedProto || request.protocol;
+  // With `app.set("trust proxy", 1)` in index.ts, request.protocol honors
+  // X-Forwarded-Proto so this resolves to https://worker.pepinho.lol behind nginx.
   const host = request.get("host") || `localhost:${process.env.PORT || 3001}`;
-  const baseUrl = `${protocol}://${host}`;
+  const baseUrl = `${request.protocol}://${host}`;
 
   response.json(await getFakeWorkerJobStatus(request.params.id, baseUrl));
 });
@@ -80,7 +87,8 @@ function validateJobPayload(payload: Partial<JobPayload>):
   if (!allowedQualities.has(quality ?? "")) {
     return {
       success: false as const,
-      error: "Quality must be one of best, 1080p, 720p, or audio-only.",
+      error:
+        "Quality must be one of best, 1080p, 720p, 480p, 360p, or audio-only.",
     };
   }
 

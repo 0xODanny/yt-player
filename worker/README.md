@@ -2,15 +2,17 @@
 
 `yt-worker` is a lightweight Express + TypeScript backend service intended to run separately from the Next.js frontend.
 
-It is designed for future long-running media job processing on DigitalOcean, but currently exposes only fake authenticated job endpoints and a health check.
+It exposes authenticated job endpoints and serves downloaded media files. yt-dlp does the actual downloading, ffmpeg is used for audio extraction and merging.
 
 ## Features
 
 - Express HTTP API with TypeScript
 - Bearer token protection for job endpoints
 - CORS restricted by `ALLOWED_ORIGIN`
-- Deterministic fake job progress without a database
-- No frontend, no ffmpeg, no real media processing yet
+- Real `yt-dlp` downloads for YouTube and other supported sources
+- Direct media file URL downloads (`.mp3`, `.mp4`, `.m4a`, `.wav`, `.mov`, `.webm`)
+- Per-job progress reported by parsing yt-dlp `--newline` output
+- Files served from `/tmp/yt-worker-downloads` and auto-pruned after 2 hours
 
 ## Scripts
 
@@ -52,6 +54,10 @@ npm run start:prod
   Shared bearer token required by `POST /jobs` and `GET /jobs/:id`.
 - `ALLOWED_ORIGIN`
   Exact allowed browser origin for CORS.
+- `YT_DLP_BINARY`
+  Optional path/name of the `yt-dlp` executable. Defaults to `yt-dlp` (must be on `$PATH`).
+- `FFMPEG_BINARY`
+  Optional path/name of the `ffmpeg` executable used by yt-dlp for audio extraction and stream merging. Defaults to `ffmpeg` (must be on `$PATH`).
 
 Copy `.env.example` to `.env` or supply these values through your deployment platform.
 
@@ -68,10 +74,10 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 ```
 
-Install Python pip and yt-dlp:
+Install ffmpeg, Python pip, and yt-dlp:
 
 ```bash
-sudo apt install -y python3-pip
+sudo apt install -y python3-pip ffmpeg
 python3 -m pip install -U yt-dlp --break-system-packages
 ```
 
@@ -104,10 +110,12 @@ npx pm2 status
 - `GET /health`
   Returns a simple readiness response.
 - `POST /jobs`
-  Requires `Authorization: Bearer <WORKER_API_SECRET>` and returns a fake queued job.
+  Requires `Authorization: Bearer <WORKER_API_SECRET>` and starts a real `yt-dlp` (or direct media URL) download. Returns the queued job descriptor.
 - `GET /jobs/:id`
-  Requires the same auth and returns deterministic fake progress based on the timestamp encoded in the job id.
+  Requires the same auth and returns the live status, progress, metadata, and (when complete) the absolute `downloadUrl`.
+- `GET /files/:filename`
+  Serves a downloaded file from `/tmp/yt-worker-downloads`.
 
 ## Current Status
 
-This worker does not download media, run ffmpeg, store jobs in a database, or manage persistent files yet.
+The worker performs real downloads with `yt-dlp` and serves the resulting files. Jobs are kept in memory only (no database) and files are pruned after 2 hours.

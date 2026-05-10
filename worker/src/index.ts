@@ -20,6 +20,12 @@ const corsOptions: cors.CorsOptions = {
   credentials: false,
 };
 
+// Trust the first proxy hop (e.g. nginx in front of the Node process on
+// DigitalOcean). This makes `req.protocol` honor `X-Forwarded-Proto` so the
+// `downloadUrl` we hand back to the frontend is `https://worker.pepinho.lol/...`
+// instead of `http://...` when TLS is terminated upstream.
+app.set("trust proxy", 1);
+
 app.use(express.json());
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
@@ -35,4 +41,5 @@ app.listen(port, () => {
   console.log(`port: ${port}`);
   console.log(`allowed origin: ${String(corsOptions.origin)}`);
   console.log(`worker api secret configured: ${Boolean(process.env.WORKER_API_SECRET?.trim())}`);
+  console.log(`trust proxy: 1 (X-Forwarded-Proto honored)`);
 });
