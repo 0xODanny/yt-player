@@ -499,6 +499,18 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
     "--newline",
     "--progress",
     "--no-warnings",
+    // Retry transient failures during the actual byte-stream download.
+    // YouTube's CDN (googlevideo.com) commonly serves a 403 mid-download
+    // when the upstream IP is sharing rate-limit budget with other users,
+    // especially via WARP / proxy exit IPs. yt-dlp resumes from the last
+    // successful byte, so this is invisible to the user when it works and
+    // turns previously-failed downloads into successes.
+    "--retries",
+    "10",
+    "--fragment-retries",
+    "10",
+    "--retry-sleep",
+    "5",
     ...(FFMPEG_BINARY ? ["--ffmpeg-location", FFMPEG_BINARY] : []),
     "-o",
     outputTemplate,
