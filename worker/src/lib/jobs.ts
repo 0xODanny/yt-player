@@ -27,11 +27,14 @@ const FFMPEG_BINARY = process.env.FFMPEG_BINARY?.trim() || "";
 // datacenter IPs with "Sign in to confirm you're not a bot." A cookies file
 // from a logged-in browser session bypasses that check.
 const YT_DLP_COOKIES = process.env.YT_DLP_COOKIES?.trim() || "";
-// Comma-separated list of YouTube player clients to try, in order. Some
-// clients (web_safari, mweb, android) are less aggressively bot-checked than
-// the default web client.
+// Comma-separated list of YouTube player clients to try, in order.
+// Default list excludes "android" because yt-dlp logs
+// `Skipping client "android" since it does not support cookies`
+// the moment YT_DLP_COOKIES is set, making it dead weight in our setup.
+// `web_safari`, `tv`, `mweb`, `ios` all accept cookies and historically
+// have wider success against age/region/anti-datacenter checks.
 const YT_DLP_PLAYER_CLIENTS =
-  process.env.YT_DLP_PLAYER_CLIENTS?.trim() || "web_safari,mweb,android";
+  process.env.YT_DLP_PLAYER_CLIENTS?.trim() || "web_safari,tv,mweb,ios";
 // Tell yt-dlp it's allowed to fetch the embedded JavaScript challenge solver
 // components from GitHub (one-time download, then cached). Required since
 // recent yt-dlp releases for YouTube's "n challenge" decryption to succeed.
@@ -40,6 +43,15 @@ const YT_DLP_REMOTE_COMPONENTS =
   process.env.YT_DLP_REMOTE_COMPONENTS === undefined
     ? "ejs:github"
     : process.env.YT_DLP_REMOTE_COMPONENTS.trim();
+// Optional outbound proxy for yt-dlp. The most reliable long-term fix for
+// YouTube's anti-bot/anti-datacenter checks is routing requests through a
+// residential IP. Set this to e.g.
+//   http://user:pass@host:port
+//   socks5://user:pass@host:port
+// to have yt-dlp tunnel every request through the given proxy. Cookies stop
+// being necessary for the vast majority of content once outbound traffic
+// looks residential.
+const YT_DLP_PROXY = process.env.YT_DLP_PROXY?.trim() || "";
 
 // Two-hour file retention is enforced inside ./storage.
 // We keep job records for the same window so the API can still answer.
@@ -436,9 +448,16 @@ function videoQualityHeightCap(quality: JobPayload["quality"]): number | null {
  * - Optionally passes a cookies file (YT_DLP_COOKIES env var) so YouTube
  *   sees an authenticated session, which bypasses the
  *   "Sign in to confirm you're not a bot" error common on cloud IPs.
+ * - Optionally tunnels every request through a proxy (YT_DLP_PROXY env
+ *   var). Pointing this at a residential proxy is the most reliable
+ *   long-term fix and makes the cookies file effectively optional.
  */
 function buildYtDlpAntiBotArgs(): string[] {
   const args: string[] = [];
+
+  if (YT_DLP_PROXY) {
+    args.push("--proxy", YT_DLP_PROXY);
+  }
 
   if (YT_DLP_PLAYER_CLIENTS) {
     args.push(

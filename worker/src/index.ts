@@ -48,7 +48,8 @@ app.listen(port, () => {
   console.log(`worker api secret configured: ${Boolean(process.env.WORKER_API_SECRET?.trim())}`);
   console.log(`trust proxy: 1 (X-Forwarded-Proto honored)`);
   console.log(`yt-dlp cookies file: ${process.env.YT_DLP_COOKIES?.trim() || "(none)"}`);
-  console.log(`yt-dlp player clients: ${process.env.YT_DLP_PLAYER_CLIENTS?.trim() || "(default)"}`);
+  console.log(`yt-dlp player clients: ${process.env.YT_DLP_PLAYER_CLIENTS?.trim() || "(default web_safari,tv,mweb,ios)"}`);
   console.log(`yt-dlp remote components: ${process.env.YT_DLP_REMOTE_COMPONENTS?.trim() || "(default ejs:github)"}`);
+  console.log(`yt-dlp proxy: ${process.env.YT_DLP_PROXY?.trim() ? "(configured)" : "(none)"}`);
   console.log(`worker public url: ${process.env.WORKER_PUBLIC_URL?.trim() || "(derived from request)"}`);
 });
