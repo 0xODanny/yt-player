@@ -19,6 +19,15 @@ const JOB_ID_PREFIX = "job";
 const METADATA_RETENTION_MS = 15 * 60 * 1_000;
 const YT_DLP_BINARY = process.env.YT_DLP_BINARY?.trim() || "yt-dlp";
 const FFMPEG_BINARY = process.env.FFMPEG_BINARY?.trim() || "ffmpeg";
+// Optional cookies file (Netscape format). YouTube increasingly blocks
+// datacenter IPs with "Sign in to confirm you're not a bot." A cookies file
+// from a logged-in browser session bypasses that check.
+const YT_DLP_COOKIES = process.env.YT_DLP_COOKIES?.trim() || "";
+// Comma-separated list of YouTube player clients to try, in order. Some
+// clients (web_safari, mweb, android) are less aggressively bot-checked than
+// the default web client.
+const YT_DLP_PLAYER_CLIENTS =
+  process.env.YT_DLP_PLAYER_CLIENTS?.trim() || "web_safari,mweb,android";
 
 // Two-hour file retention is enforced inside ./storage.
 // We keep job records for the same window so the API can still answer.
@@ -388,6 +397,31 @@ function videoQualityHeightCap(quality: JobPayload["quality"]): number | null {
   }
 }
 
+/**
+ * Anti-bot / data-center friendliness flags for yt-dlp.
+ * - Switches to less aggressively challenged YouTube player clients
+ *   (configurable via YT_DLP_PLAYER_CLIENTS env var).
+ * - Optionally passes a cookies file (YT_DLP_COOKIES env var) so YouTube
+ *   sees an authenticated session, which bypasses the
+ *   "Sign in to confirm you're not a bot" error common on cloud IPs.
+ */
+function buildYtDlpAntiBotArgs(): string[] {
+  const args: string[] = [];
+
+  if (YT_DLP_PLAYER_CLIENTS) {
+    args.push(
+      "--extractor-args",
+      `youtube:player_client=${YT_DLP_PLAYER_CLIENTS}`,
+    );
+  }
+
+  if (YT_DLP_COOKIES) {
+    args.push("--cookies", YT_DLP_COOKIES);
+  }
+
+  return args;
+}
+
 async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: JobPayload) {
   // We let yt-dlp pick the final extension via `%(ext)s` so audio extraction
   // (mp3) and merged video (mp4) both end up with the right filename.
@@ -398,6 +432,7 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
 
   const args = [
     ...formatArgs,
+    ...buildYtDlpAntiBotArgs(),
     "--no-playlist",
     "--no-part",
     "--no-mtime",
@@ -574,6 +609,7 @@ async function extractJobMetadata(url: string): Promise<{
     const { stdout } = await execFileAsync(YT_DLP_BINARY, [
       "--dump-json",
       "--no-playlist",
+      ...buildYtDlpAntiBotArgs(),
       normalizedUrl,
     ]);
 

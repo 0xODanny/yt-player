@@ -58,6 +58,10 @@ npm run start:prod
   Optional path/name of the `yt-dlp` executable. Defaults to `yt-dlp` (must be on `$PATH`).
 - `FFMPEG_BINARY`
   Optional path/name of the `ffmpeg` executable used by yt-dlp for audio extraction and stream merging. Defaults to `ffmpeg` (must be on `$PATH`).
+- `YT_DLP_PLAYER_CLIENTS`
+  Optional comma-separated list of YouTube player clients yt-dlp should try, in order. Defaults to `web_safari,mweb,android`. These tend to be less aggressively bot-checked than the default `web` client.
+- `YT_DLP_COOKIES`
+  Optional path to a Netscape-format cookies file. If set, yt-dlp will pass it via `--cookies`. Use this when YouTube returns "Sign in to confirm you're not a bot." on cloud IPs.
 
 Copy `.env.example` to `.env` or supply these values through your deployment platform.
 
