@@ -441,6 +441,10 @@ function videoQualityHeightCap(quality: JobPayload["quality"]): number | null {
       return 480;
     case "360p":
       return 360;
+    case "240p":
+      return 240;
+    case "144p":
+      return 144;
     default:
       return null;
   }

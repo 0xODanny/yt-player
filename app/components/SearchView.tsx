@@ -33,6 +33,10 @@ function presetToJobPayload(preset: SearchPreset): {
   quality: JobPayload["quality"];
 } {
   switch (preset) {
+    case "video-144p":
+      return { format: "mp4", quality: "144p" };
+    case "video-240p":
+      return { format: "mp4", quality: "240p" };
     case "video-360p":
       return { format: "mp4", quality: "360p" };
     case "video-720p":
@@ -47,6 +51,10 @@ function presetToJobPayload(preset: SearchPreset): {
 
 function presetLabel(preset: SearchPreset): string {
   switch (preset) {
+    case "video-144p":
+      return "144p video";
+    case "video-240p":
+      return "240p video";
     case "video-360p":
       return "360p video";
     case "video-720p":
@@ -61,6 +69,8 @@ function presetLabel(preset: SearchPreset): string {
 
 const PRESET_OPTIONS: Array<{ value: SearchPreset; label: string }> = [
   { value: "mp3", label: "MP3" },
+  { value: "video-144p", label: "144p" },
+  { value: "video-240p", label: "240p" },
   { value: "video-360p", label: "360p" },
   { value: "video-720p", label: "720p" },
   { value: "video-1080p", label: "1080p" },

@@ -21,7 +21,13 @@ import {
  * No other files need to change to render a new toggle.
  */
 
-export type SearchPreset = "mp3" | "video-360p" | "video-720p" | "video-1080p";
+export type SearchPreset =
+  | "mp3"
+  | "video-144p"
+  | "video-240p"
+  | "video-360p"
+  | "video-720p"
+  | "video-1080p";
 
 export type Settings = {
   pipAuto: boolean;
@@ -81,10 +87,12 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
       "Quality used when you tap a result in the Search tab. MP3 audio is fastest and smallest — best for music in the gym.",
     section: "Search",
     options: [
-      { value: "mp3", label: "MP3 audio (fastest, smallest)" },
-      { value: "video-360p", label: "Video 360p (data saver)" },
-      { value: "video-720p", label: "Video 720p" },
-      { value: "video-1080p", label: "Video 1080p" },
+      { value: "mp3", label: "MP3 audio (~5 MB)" },
+      { value: "video-144p", label: "Video 144p (~12 MB)" },
+      { value: "video-240p", label: "Video 240p (~25 MB)" },
+      { value: "video-360p", label: "Video 360p (~50 MB)" },
+      { value: "video-720p", label: "Video 720p (~80 MB)" },
+      { value: "video-1080p", label: "Video 1080p (~150 MB)" },
     ],
   },
   {

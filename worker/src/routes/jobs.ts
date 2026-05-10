@@ -16,6 +16,8 @@ const allowedQualities = new Set([
   "720p",
   "480p",
   "360p",
+  "240p",
+  "144p",
   "audio-only",
 ]);
 
@@ -89,7 +91,7 @@ function validateJobPayload(payload: Partial<JobPayload>):
     return {
       success: false as const,
       error:
-        "Quality must be one of best, 1080p, 720p, 480p, 360p, or audio-only.",
+        "Quality must be one of best, 1080p, 720p, 480p, 360p, 240p, 144p, or audio-only.",
     };
   }
 

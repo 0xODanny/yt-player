@@ -6,6 +6,8 @@ export type JobQuality =
   | "720p"
   | "480p"
   | "360p"
+  | "240p"
+  | "144p"
   | "audio-only";
 
 export type JobStatus = "queued" | "processing" | "complete" | "failed";

@@ -27,6 +27,8 @@ type QualityOption =
   | "720p"
   | "480p"
   | "360p"
+  | "240p"
+  | "144p"
   | "audio-only";
 
 type ActiveJob = JobResponse & Partial<JobStatusResponse>;
@@ -53,11 +55,13 @@ const formatOptions: Array<{ value: FormatOption; label: string }> = [
 
 const qualityOptions: Array<{ value: QualityOption; label: string }> = [
   { value: "best", label: "Best available" },
-  { value: "1080p", label: "Up to 1080p" },
-  { value: "720p", label: "Up to 720p" },
-  { value: "480p", label: "Up to 480p (lighter)" },
-  { value: "360p", label: "Up to 360p (data saver)" },
-  { value: "audio-only", label: "Audio only" },
+  { value: "1080p", label: "Up to 1080p (~150 MB / 5 min)" },
+  { value: "720p", label: "Up to 720p (~80 MB / 5 min)" },
+  { value: "480p", label: "Up to 480p (~60 MB / 5 min)" },
+  { value: "360p", label: "Up to 360p (~50 MB / 5 min)" },
+  { value: "240p", label: "Up to 240p (~25 MB / 5 min)" },
+  { value: "144p", label: "Up to 144p (~12 MB / 5 min — minimum)" },
+  { value: "audio-only", label: "Audio only (~5 MB / 5 min)" },
 ];
 
 const DIRECT_MEDIA_EXTENSIONS = [".mp3", ".mp4", ".m4a", ".wav", ".mov", ".webm"];
