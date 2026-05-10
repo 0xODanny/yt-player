@@ -428,14 +428,23 @@ export async function getStreamUrl(
   //   `best` returns "Requested format is not available." That's why
   //   the chain has to be explicit and HLS-first: HLS variant URLs are
   //   the only way to get a single playable URL for adaptive content.
+  // 2024+ reality: YouTube requires "PO Tokens" (Proof-of-Origin) for most
+  // formats served by the ios/tv/mweb/android clients, and skips them
+  // entirely when no PO Token is provided. The DRM checker also blocks
+  // tv-client https. Result: on many videos the only format still
+  // streamable is the legacy progressive itag 18 (360p mp4 with AAC).
+  // That's fine for phone streaming and is what we end up using a lot
+  // of the time. HLS is kept as the *preferred* path for videos that
+  // do still expose it without a PO Token.
+  //
+  // For audio-only streams, the m4a-only formats are also PO-Token-
+  // gated, so we have to fall back to itag 18 too — the <audio>
+  // element plays the audio track of an mp4 just fine, ignoring the
+  // video. (We never ship the bytes, the browser fetches them.)
   const formatSelector =
     type === "audio"
-      ? // Audio: progressive m4a is universally available and tiny.
-        "bestaudio[acodec^=mp4a]/bestaudio[ext=m4a]/140/bestaudio"
-      : // Video: HLS first (works in iOS Safari natively, and via
-        // hls.js elsewhere later); then progressive itag 18 from mweb;
-        // then any combined-format fallback.
-        "best[protocol*=m3u8]/best[ext=mp4][acodec!=none][vcodec!=none]/18/22/best";
+      ? "bestaudio[acodec^=mp4a]/bestaudio[ext=m4a]/140/bestaudio/18"
+      : "best[protocol*=m3u8]/best[ext=mp4][acodec!=none][vcodec!=none]/18/22/best";
 
   const args = [
     "--dump-single-json",
