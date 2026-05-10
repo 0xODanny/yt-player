@@ -18,7 +18,11 @@ const execFileAsync = promisify(execFile);
 const JOB_ID_PREFIX = "job";
 const METADATA_RETENTION_MS = 15 * 60 * 1_000;
 const YT_DLP_BINARY = process.env.YT_DLP_BINARY?.trim() || "yt-dlp";
-const FFMPEG_BINARY = process.env.FFMPEG_BINARY?.trim() || "ffmpeg";
+// FFMPEG_BINARY: when set, we pass it through `--ffmpeg-location` so yt-dlp
+// uses that exact binary. When unset, we leave the flag off entirely so
+// yt-dlp does its own PATH lookup. (Passing `--ffmpeg-location ffmpeg` makes
+// yt-dlp treat "ffmpeg" as a literal relative path and then fail to find it.)
+const FFMPEG_BINARY = process.env.FFMPEG_BINARY?.trim() || "";
 // Optional cookies file (Netscape format). YouTube increasingly blocks
 // datacenter IPs with "Sign in to confirm you're not a bot." A cookies file
 // from a logged-in browser session bypasses that check.
@@ -459,8 +463,7 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
     "--newline",
     "--progress",
     "--no-warnings",
-    "--ffmpeg-location",
-    FFMPEG_BINARY,
+    ...(FFMPEG_BINARY ? ["--ffmpeg-location", FFMPEG_BINARY] : []),
     "-o",
     outputTemplate,
     normalizedUrl,
