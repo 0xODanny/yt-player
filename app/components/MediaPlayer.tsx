@@ -3,43 +3,47 @@
 import { useEffect, useRef, useState } from "react";
 
 import { getItemObjectUrl, type ManifestItem } from "@/lib/library";
+import { useSettings } from "@/lib/settings";
 
 type MediaPlayerProps = {
   item: ManifestItem | null;
   onClose: () => void;
 };
 
-const AUDIO_MODE_STORAGE_KEY = "yt-local-tool:audio-only-mode";
-
-function loadAudioModePreference(): boolean {
-  if (typeof window === "undefined") {
+function isPipSupported(): boolean {
+  if (typeof document === "undefined") {
     return false;
   }
-  try {
-    return window.localStorage.getItem(AUDIO_MODE_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function saveAudioModePreference(enabled: boolean): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(AUDIO_MODE_STORAGE_KEY, enabled ? "1" : "0");
-  } catch {
-    // ignore quota errors
-  }
+  return Boolean(
+    document.pictureInPictureEnabled &&
+      typeof HTMLVideoElement !== "undefined" &&
+      "requestPictureInPicture" in HTMLVideoElement.prototype,
+  );
 }
 
 export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
+  const { settings } = useSettings();
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [audioOnly, setAudioOnly] = useState<boolean>(() => loadAudioModePreference());
+  // Per-session toggle. Initial value follows the global default; user can
+  // override for this playback only without changing the global setting.
+  const [audioOnly, setAudioOnly] = useState<boolean>(false);
+  const [isPip, setIsPip] = useState(false);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
+
+  // Sync the per-session audio-only with the user's preferred default
+  // each time a new item opens. We only react to item id changes, not to
+  // settings.audioOnlyDefault changes mid-session, so the user can flip
+  // modes inside the player without being yanked back.
+  useEffect(() => {
+    if (!item) {
+      return;
+    }
+    setAudioOnly(settings.audioOnlyDefault);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id]);
 
   // Audio elements always play with screen off; video elements get
   // suspended on most platforms when the screen locks. So when item is
@@ -235,11 +239,85 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
   }, [objectUrl, useAudioElement]);
 
   function toggleAudioOnly() {
-    setAudioOnly((current) => {
-      const next = !current;
-      saveAudioModePreference(next);
-      return next;
-    });
+    setAudioOnly((current) => !current);
+  }
+
+  // Track whether the video element is currently in PiP so the button label
+  // and aria-pressed state stay accurate (user might exit PiP via the
+  // floating window's own close button).
+  useEffect(() => {
+    const el = mediaRef.current;
+    if (!el || !(el instanceof HTMLVideoElement)) {
+      return;
+    }
+    const onEnter = () => setIsPip(true);
+    const onLeave = () => setIsPip(false);
+    el.addEventListener("enterpictureinpicture", onEnter);
+    el.addEventListener("leavepictureinpicture", onLeave);
+    return () => {
+      el.removeEventListener("enterpictureinpicture", onEnter);
+      el.removeEventListener("leavepictureinpicture", onLeave);
+    };
+  }, [objectUrl, useAudioElement]);
+
+  // Auto-Picture-in-Picture: when the page becomes hidden (user switched
+  // apps or locked the screen) and we have a playing <video> element, ask
+  // the browser to enter PiP so playback continues in a floating window.
+  // Gated by the user's global setting. iOS Safari supports this since 14;
+  // Android Chrome supports it; desktop Chrome/Edge support it.
+  useEffect(() => {
+    if (!settings.pipAuto) {
+      return;
+    }
+    if (!isPipSupported()) {
+      return;
+    }
+    if (useAudioElement) {
+      return;
+    }
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "hidden") {
+        return;
+      }
+      const el = mediaRef.current;
+      if (!(el instanceof HTMLVideoElement)) {
+        return;
+      }
+      if (el.paused || el.ended) {
+        return;
+      }
+      if (document.pictureInPictureElement === el) {
+        return;
+      }
+      el.requestPictureInPicture().catch(() => {
+        // PiP can be refused — user gesture missing, OS denies, etc.
+        // Failing silently is fine; standard background-pause behavior
+        // takes over.
+      });
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [settings.pipAuto, useAudioElement, objectUrl]);
+
+  async function togglePip() {
+    if (!isPipSupported()) {
+      return;
+    }
+    const el = mediaRef.current;
+    if (!(el instanceof HTMLVideoElement)) {
+      return;
+    }
+    try {
+      if (document.pictureInPictureElement === el) {
+        await document.exitPictureInPicture();
+      } else {
+        await el.requestPictureInPicture();
+      }
+    } catch {
+      // ignore — PiP can be refused for many reasons
+    }
   }
 
   if (!item) {
@@ -247,6 +325,7 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
   }
 
   const showAudioToggle = item.type === "video";
+  const showPipButton = item.type === "video" && !useAudioElement && isPipSupported();
 
   return (
     <div
@@ -276,8 +355,8 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
           </button>
         </header>
 
-        {showAudioToggle ? (
-          <div className="player-toolbar">
+        <div className="player-toolbar">
+          {showAudioToggle ? (
             <button
               type="button"
               className={`player-mode${audioOnly ? " active" : ""}`}
@@ -287,19 +366,28 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
             >
               {audioOnly ? "Video mode" : "Audio-only"}
             </button>
-            <span className="player-toolbar-hint">
-              {audioOnly
+          ) : null}
+          {showPipButton ? (
+            <button
+              type="button"
+              className={`player-mode${isPip ? " active" : ""}`}
+              onClick={() => void togglePip()}
+              aria-pressed={isPip}
+              title={isPip ? "Exit Picture-in-Picture" : "Picture-in-Picture"}
+            >
+              {isPip ? "Exit PiP" : "Picture-in-Picture"}
+            </button>
+          ) : null}
+          <span className="player-toolbar-hint">
+            {item.type === "video"
+              ? audioOnly
                 ? "Plays with screen off · saves battery"
-                : "Audio-only continues playing with screen off"}
-            </span>
-          </div>
-        ) : (
-          <div className="player-toolbar">
-            <span className="player-toolbar-hint">
-              Plays with screen off · lock-screen controls available
-            </span>
-          </div>
-        )}
+                : settings.pipAuto && isPipSupported()
+                  ? "Auto-PiP on app switch · audio-only also available"
+                  : "Switch to audio-only or use PiP for screen-off playback"
+              : "Plays with screen off · lock-screen controls available"}
+          </span>
+        </div>
 
         <div className="player-body">
           {loading ? <p className="player-status">Loading…</p> : null}

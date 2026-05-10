@@ -14,8 +14,10 @@ import {
   isLibrarySupported,
   requestPersistentStorage,
 } from "@/lib/library";
+import { useSettings } from "@/lib/settings";
 
 import { LibraryView } from "./components/LibraryView";
+import { SettingsPanel } from "./components/SettingsPanel";
 
 type FormatOption = "mp3" | "mp4";
 type QualityOption =
@@ -252,7 +254,9 @@ export default function HomePage() {
   >("idle");
   const [librarySaveError, setLibrarySaveError] = useState<string | null>(null);
   const [libraryReloadKey, setLibraryReloadKey] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const autoSavedJobIds = useRef<Set<string>>(new Set());
+  const { settings } = useSettings();
 
   useEffect(() => {
     setRecentJobs(loadRecentJobs());
@@ -397,6 +401,9 @@ export default function HomePage() {
     if (!isLibrarySupported()) {
       return;
     }
+    if (!settings.autoSaveLibrary) {
+      return;
+    }
     if (autoSavedJobIds.current.has(job.id)) {
       return;
     }
@@ -447,7 +454,7 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [job, url, format, quality]);
+  }, [job, url, format, quality, settings.autoSaveLibrary]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -578,8 +585,32 @@ export default function HomePage() {
         <div className="topbar-meta">
           <span className={`status-dot ${isOnline ? "online" : "offline"}`} aria-hidden />
           <span className="topbar-meta-label">{isOnline ? "Online" : "Offline"}</span>
+          <button
+            type="button"
+            className="topbar-gear"
+            aria-label="Settings"
+            title="Settings"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
         </div>
       </header>
+
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <nav className="tab-bar" role="tablist" aria-label="Sections">
         <button

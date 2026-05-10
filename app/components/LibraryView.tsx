@@ -22,6 +22,7 @@ import {
   renameItem,
   type StorageEstimate,
 } from "@/lib/library";
+import { useSettings } from "@/lib/settings";
 
 import { MediaPlayer } from "./MediaPlayer";
 
@@ -30,6 +31,7 @@ type LibraryViewProps = {
 };
 
 export function LibraryView({ reloadKey }: LibraryViewProps) {
+  const { settings } = useSettings();
   const [supported] = useState(() => isLibrarySupported());
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [activeFolderId, setActiveFolderId] = useState<string>(DEFAULT_FOLDER_ID);
@@ -103,11 +105,13 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
       if (folderId === DEFAULT_FOLDER_ID) {
         return;
       }
-      const ok = window.confirm(
-        "Delete this folder? Files inside will be moved to Default.",
-      );
-      if (!ok) {
-        return;
+      if (settings.confirmDelete) {
+        const ok = window.confirm(
+          "Delete this folder? Files inside will be moved to Default.",
+        );
+        if (!ok) {
+          return;
+        }
       }
       setBusy(true);
       try {
@@ -118,7 +122,7 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
         setBusy(false);
       }
     },
-    [refresh],
+    [refresh, settings.confirmDelete],
   );
 
   const handleMove = useCallback(
@@ -169,9 +173,11 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
 
   const handleDeleteItem = useCallback(
     async (item: ManifestItem) => {
-      const ok = window.confirm(`Delete "${item.title}" from your library?`);
-      if (!ok) {
-        return;
+      if (settings.confirmDelete) {
+        const ok = window.confirm(`Delete "${item.title}" from your library?`);
+        if (!ok) {
+          return;
+        }
       }
       setBusy(true);
       try {
@@ -181,7 +187,7 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
         setBusy(false);
       }
     },
-    [refresh],
+    [refresh, settings.confirmDelete],
   );
 
   const handleExportToDevice = useCallback(async (item: ManifestItem) => {

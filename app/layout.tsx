@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { SettingsProvider } from "@/lib/settings";
 import { ServiceWorkerRegistrar } from "./sw-register";
 
 export const metadata: Metadata = {
@@ -39,7 +40,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <ServiceWorkerRegistrar />
-        {children}
+        <SettingsProvider>{children}</SettingsProvider>
       </body>
     </html>
   );
