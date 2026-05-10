@@ -1,4 +1,11 @@
-import { config as loadEnv } from "dotenv";
+// IMPORTANT: this side-effect import must come before any other import.
+// `dotenv/config` calls dotenv.config() synchronously as part of being
+// loaded, which populates process.env *before* the rest of the module
+// graph is evaluated. The previous pattern (`import { config }` + a later
+// `loadEnv()` call) ran too late: modules like ./lib/jobs read env vars
+// at module-load time (e.g. const YT_DLP_COOKIES = process.env...), so
+// they were captured as empty strings before dotenv had a chance to run.
+import "dotenv/config";
 
 import cors from "cors";
 import express from "express";
@@ -7,8 +14,6 @@ import { startDownloadCleanupLoop } from "./lib/storage";
 import { filesRouter } from "./routes/files";
 import { healthRouter } from "./routes/health";
 import { jobsRouter } from "./routes/jobs";
-
-loadEnv();
 
 const app = express();
 const port = Number(process.env.PORT || 3001);
@@ -42,4 +47,8 @@ app.listen(port, () => {
   console.log(`allowed origin: ${String(corsOptions.origin)}`);
   console.log(`worker api secret configured: ${Boolean(process.env.WORKER_API_SECRET?.trim())}`);
   console.log(`trust proxy: 1 (X-Forwarded-Proto honored)`);
+  console.log(`yt-dlp cookies file: ${process.env.YT_DLP_COOKIES?.trim() || "(none)"}`);
+  console.log(`yt-dlp player clients: ${process.env.YT_DLP_PLAYER_CLIENTS?.trim() || "(default)"}`);
+  console.log(`yt-dlp remote components: ${process.env.YT_DLP_REMOTE_COMPONENTS?.trim() || "(default ejs:github)"}`);
+  console.log(`worker public url: ${process.env.WORKER_PUBLIC_URL?.trim() || "(derived from request)"}`);
 });

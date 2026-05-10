@@ -11,3 +11,4 @@ worker/.env.*
 !worker/.env.example
 .DS_Store
 *.tsbuildinfo
+.vercel
