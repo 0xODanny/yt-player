@@ -280,7 +280,10 @@ export async function searchYouTube(
     "--dump-json",
     "--flat-playlist",
     "--no-warnings",
-    ...buildYtDlpAntiBotArgs(),
+    // Search always hits YouTube, so always go through the residential
+    // proxy + cookies — datacenter IPs get rate-limited or blocked here
+    // even faster than on actual video downloads.
+    ...buildYtDlpAntiBotArgs({ useProxy: true }),
     searchSpec,
   ];
 
@@ -288,6 +291,7 @@ export async function searchYouTube(
   try {
     const result = await execFileAsync(YT_DLP_BINARY, args, {
       maxBuffer: 16 * 1024 * 1024,
+      env: buildYtDlpEnv(true),
     });
     stdout = result.stdout ?? "";
   } catch (error) {
@@ -575,10 +579,14 @@ function videoQualityHeightCap(quality: JobPayload["quality"]): number | null {
  *   var). Pointing this at a residential proxy is the most reliable
  *   long-term fix and makes the cookies file effectively optional.
  */
-function buildYtDlpAntiBotArgs(): string[] {
+function buildYtDlpAntiBotArgs(options: { useProxy: boolean } = { useProxy: true }): string[] {
   const args: string[] = [];
 
-  if (YT_DLP_PROXY) {
+  // The residential proxy is expensive metered bandwidth (IPRoyal etc.),
+  // so only route YouTube through it. Other sites (direct media, adult
+  // tubes, etc.) almost always work fine from the droplet's free
+  // datacenter IP and there's no point burning paid GB on them.
+  if (YT_DLP_PROXY && options.useProxy) {
     args.push("--proxy", YT_DLP_PROXY);
   }
 
@@ -589,7 +597,9 @@ function buildYtDlpAntiBotArgs(): string[] {
     );
   }
 
-  if (YT_DLP_COOKIES) {
+  // Cookies are also YouTube-specific. Sending them to non-YouTube hosts
+  // is at best wasted bytes and at worst leaks irrelevant session info.
+  if (YT_DLP_COOKIES && options.useProxy) {
     args.push("--cookies", YT_DLP_COOKIES);
   }
 
@@ -600,6 +610,38 @@ function buildYtDlpAntiBotArgs(): string[] {
   return args;
 }
 
+/**
+ * Returns true if the URL points at YouTube and should be routed through
+ * the configured residential proxy.
+ */
+function shouldUseProxyForUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    return isYouTubeHost(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns the env block to pass to yt-dlp for a given URL. We strip
+ * HTTP_PROXY / HTTPS_PROXY for non-YouTube downloads so urllib-based
+ * extractors (e.g. some adult tube sites) hit origin directly from the
+ * droplet IP, instead of tunneling — and burning bandwidth — through
+ * the residential proxy.
+ */
+function buildYtDlpEnv(useProxy: boolean): NodeJS.ProcessEnv {
+  if (useProxy) {
+    return process.env;
+  }
+  const env = { ...process.env };
+  delete env.HTTP_PROXY;
+  delete env.HTTPS_PROXY;
+  delete env.http_proxy;
+  delete env.https_proxy;
+  return env;
+}
+
 async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: JobPayload) {
   // We let yt-dlp pick the final extension via `%(ext)s` so audio extraction
   // (mp3) and merged video (mp4) both end up with the right filename.
@@ -607,10 +649,11 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
   const outputTemplate = path.join(DOWNLOADS_DIR, `${safeJobId}.%(ext)s`);
 
   const formatArgs = buildYtDlpFormatArgs(payload);
+  const useProxy = shouldUseProxyForUrl(normalizedUrl);
 
   const args = [
     ...formatArgs,
-    ...buildYtDlpAntiBotArgs(),
+    ...buildYtDlpAntiBotArgs({ useProxy }),
     "--no-playlist",
     "--no-part",
     "--no-mtime",
@@ -653,7 +696,12 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
 
   const child = spawn(YT_DLP_BINARY, args, {
     stdio: ["ignore", "pipe", "pipe"],
+    env: buildYtDlpEnv(useProxy),
   });
+
+  console.log(
+    `[job ${jobId}] starting download via ${useProxy ? "residential proxy" : "direct droplet IP"} (${normalizedUrl})`,
+  );
 
   let stderrBuffer = "";
 
@@ -821,14 +869,19 @@ async function extractJobMetadata(url: string): Promise<{
   message?: string;
 }> {
   const normalizedUrl = normalizeMediaSourceUrl(url);
+  const useProxy = shouldUseProxyForUrl(normalizedUrl);
 
   try {
-    const { stdout } = await execFileAsync(YT_DLP_BINARY, [
-      "--dump-json",
-      "--no-playlist",
-      ...buildYtDlpAntiBotArgs(),
-      normalizedUrl,
-    ]);
+    const { stdout } = await execFileAsync(
+      YT_DLP_BINARY,
+      [
+        "--dump-json",
+        "--no-playlist",
+        ...buildYtDlpAntiBotArgs({ useProxy }),
+        normalizedUrl,
+      ],
+      { env: buildYtDlpEnv(useProxy) },
+    );
 
     const info = JSON.parse(stdout) as YtDlpVideoInfo;
 
