@@ -966,6 +966,45 @@ code {
   color: var(--text);
 }
 
+.player-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  border-top: 1px solid rgba(125, 144, 170, 0.08);
+  border-bottom: 1px solid rgba(125, 144, 170, 0.08);
+}
+
+.player-mode {
+  border: 1px solid rgba(152, 167, 194, 0.2);
+  background: rgba(7, 11, 18, 0.6);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.player-mode:hover {
+  color: var(--text);
+}
+
+.player-mode.active {
+  color: var(--accent);
+  background: rgba(97, 218, 251, 0.1);
+  border-color: rgba(97, 218, 251, 0.35);
+}
+
+.player-toolbar-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .player-body {
   display: grid;
   gap: 12px;
