@@ -362,6 +362,13 @@ export async function searchYouTube(
 export type WorkerStreamResult = {
   url: string;
   type: "audio" | "video";
+  /**
+   * yt-dlp's protocol field: "https" for progressive single-file streams,
+   * "m3u8_native"/"m3u8" for HLS. The frontend uses this to decide whether
+   * to feed the URL straight to <video> (HLS works natively on iOS Safari)
+   * or to wire up hls.js (needed on Chrome/Firefox).
+   */
+  protocol?: string;
   title?: string;
   author?: string;
   thumbnail?: string;
@@ -407,10 +414,26 @@ export async function getStreamUrl(
   // their signed URLs aren't IP-bound. Pass via --extractor-args directly
   // here so we don't disturb the global YT_DLP_PLAYER_CLIENTS env var that
   // downloads/search rely on.
+  //
+  // Format selection notes:
+  //   The ios / tv clients almost always return *HLS* (m3u8) for video,
+  //   not progressive MP4. iOS Safari plays HLS natively in <video>;
+  //   Android Chrome and desktop browsers need hls.js (we'll wire that
+  //   in if/when we support those targets — iPhone is the primary user
+  //   right now). Progressive itag 22 (720p) is largely retired by
+  //   YouTube and itag 18 (360p) is being phased out, so they only sit
+  //   in the fallback chain — relying on them as the primary selector
+  //   broke streams for most modern videos with "Requested format is
+  //   not available."
   const formatSelector =
     type === "audio"
-      ? "bestaudio[protocol^=https][ext=m4a]/140/bestaudio"
-      : "best[protocol^=https][acodec!=none][vcodec!=none][ext=mp4]/22/18";
+      ? // For audio: prefer m4a (universally playable in <audio>),
+        // fall back to itag 140 (128 kbps m4a) or anything yt-dlp has.
+        "bestaudio[acodec^=mp4a]/bestaudio[ext=m4a]/140/bestaudio"
+      : // For video: prefer HLS (m3u8) which the ios client always has;
+        // fall back to any progressive https stream; last resort itag 18
+        // and just "best".
+        "best[protocol*=m3u8]/best[acodec!=none][vcodec!=none][protocol^=https]/22/18/best";
 
   const args = [
     "--dump-single-json",
@@ -469,9 +492,23 @@ export async function getStreamUrl(
     // ignore
   }
 
+  // yt-dlp puts the chosen format's protocol on the top-level when a
+  // single format was selected (our case). Fall back to scanning the
+  // formats array if the structure differs.
+  let protocol: string | undefined;
+  if (typeof (info as { protocol?: unknown }).protocol === "string") {
+    protocol = (info as { protocol: string }).protocol;
+  } else if (info.formats?.length) {
+    const matching = (info.formats as Array<{ url?: string; protocol?: string }>).find(
+      (f) => f.url === directUrl,
+    );
+    protocol = matching?.protocol;
+  }
+
   return {
     url: directUrl,
     type,
+    protocol,
     title: info.title || undefined,
     author: info.uploader || info.channel,
     thumbnail: info.thumbnail,

@@ -17,6 +17,12 @@
 export type StreamSource = {
   url: string;
   type: "audio" | "video";
+  /**
+   * yt-dlp's protocol field. "m3u8" / "m3u8_native" means HLS — plays
+   * natively on iOS Safari but needs hls.js on Chrome/Firefox/Android.
+   * "https" means a single progressive stream — plays everywhere.
+   */
+  protocol?: string;
   title?: string;
   author?: string;
   thumbnail?: string;
