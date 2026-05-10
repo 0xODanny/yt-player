@@ -64,6 +64,8 @@ npm run start:prod
   Optional comma-separated list of YouTube player clients yt-dlp should try, in order. Defaults to `web_safari,mweb,android`. These tend to be less aggressively bot-checked than the default `web` client.
 - `YT_DLP_COOKIES`
   Optional path to a Netscape-format cookies file. If set, yt-dlp will pass it via `--cookies`. Use this when YouTube returns "Sign in to confirm you're not a bot." on cloud IPs.
+- `YT_DLP_REMOTE_COMPONENTS`
+  yt-dlp `--remote-components` value. Defaults to `ejs:github`, which lets yt-dlp fetch the embedded JavaScript challenge solver from the official yt-dlp GitHub release (one-time download). Required for YouTube's "n challenge" decryption in recent yt-dlp versions. Set to an empty string to disable remote downloads.
 
 Copy `.env.example` to `.env` or supply these values through your deployment platform.
 

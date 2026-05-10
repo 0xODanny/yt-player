@@ -32,6 +32,14 @@ const YT_DLP_COOKIES = process.env.YT_DLP_COOKIES?.trim() || "";
 // the default web client.
 const YT_DLP_PLAYER_CLIENTS =
   process.env.YT_DLP_PLAYER_CLIENTS?.trim() || "web_safari,mweb,android";
+// Tell yt-dlp it's allowed to fetch the embedded JavaScript challenge solver
+// components from GitHub (one-time download, then cached). Required since
+// recent yt-dlp releases for YouTube's "n challenge" decryption to succeed.
+// Set to an empty string to disable.
+const YT_DLP_REMOTE_COMPONENTS =
+  process.env.YT_DLP_REMOTE_COMPONENTS === undefined
+    ? "ejs:github"
+    : process.env.YT_DLP_REMOTE_COMPONENTS.trim();
 
 // Two-hour file retention is enforced inside ./storage.
 // We keep job records for the same window so the API can still answer.
@@ -441,6 +449,10 @@ function buildYtDlpAntiBotArgs(): string[] {
 
   if (YT_DLP_COOKIES) {
     args.push("--cookies", YT_DLP_COOKIES);
+  }
+
+  if (YT_DLP_REMOTE_COMPONENTS) {
+    args.push("--remote-components", YT_DLP_REMOTE_COMPONENTS);
   }
 
   return args;
