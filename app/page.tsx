@@ -612,19 +612,32 @@ export default function HomePage() {
         <form className="job-form" onSubmit={handleSubmit}>
           <label className="field">
             <span>Video URL</span>
-            <input
-              type="url"
-              name="url"
-              placeholder="Paste a YouTube or direct media URL"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              aria-invalid={isInvalidUrl}
-              spellCheck={false}
-              autoComplete="off"
-              autoCapitalize="off"
-              autoCorrect="off"
-              inputMode="url"
-            />
+            <div className="input-with-clear">
+              <input
+                type="url"
+                name="url"
+                placeholder="Paste a YouTube or direct media URL"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                aria-invalid={isInvalidUrl}
+                spellCheck={false}
+                autoComplete="off"
+                autoCapitalize="off"
+                autoCorrect="off"
+                inputMode="url"
+              />
+              {url ? (
+                <button
+                  type="button"
+                  className="input-clear"
+                  onClick={() => setUrl("")}
+                  aria-label="Clear URL"
+                  title="Clear"
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
             <span className={`hint hint-${urlHelper.tone}`}>{urlHelper.text}</span>
           </label>
 

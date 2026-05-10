@@ -1017,6 +1017,98 @@ code {
   width: 100%;
 }
 
+/* ── URL clear button ───────────────────────────────── */
+.input-with-clear {
+  position: relative;
+}
+
+.input-with-clear input {
+  /* Reserve room for the clear button so the text never sits under it. */
+  padding-right: 44px;
+}
+
+.input-clear {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 0;
+  background: rgba(152, 167, 194, 0.12);
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 1.05rem;
+  line-height: 1;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.input-clear:hover {
+  color: var(--text);
+  background: rgba(152, 167, 194, 0.22);
+}
+
+/* ── Folder picker modal (move to folder) ──────────── */
+.picker-dialog {
+  width: min(420px, 100%);
+  max-height: 80vh;
+  background: var(--panel-strong);
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.folder-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.folder-picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(152, 167, 194, 0.12);
+  background: rgba(7, 11, 18, 0.6);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.95rem;
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.folder-picker-row:hover:not(:disabled) {
+  border-color: rgba(97, 218, 251, 0.35);
+  background: rgba(97, 218, 251, 0.06);
+}
+
+.folder-picker-row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.folder-picker-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  margin-right: 12px;
+}
+
 @media (max-width: 720px) {
   .field-grid {
     grid-template-columns: 1fr;

@@ -35,6 +35,7 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
   const [activeFolderId, setActiveFolderId] = useState<string>(DEFAULT_FOLDER_ID);
   const [storage, setStorage] = useState<StorageEstimate | null>(null);
   const [playingItem, setPlayingItem] = useState<ManifestItem | null>(null);
+  const [movingItem, setMovingItem] = useState<ManifestItem | null>(null);
   const [busy, setBusy] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -121,36 +122,32 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
   );
 
   const handleMove = useCallback(
-    async (item: ManifestItem) => {
+    (item: ManifestItem) => {
       if (folders.length <= 1) {
         window.alert("Create another folder first.");
         return;
       }
-      const options = folders
-        .filter((folder) => folder.id !== item.folderId)
-        .map((folder, index) => `${index + 1}. ${folder.name}`)
-        .join("\n");
-      const choice = window.prompt(
-        `Move "${item.title}" to which folder?\n${options}`,
-      );
-      if (!choice) {
-        return;
-      }
-      const idx = Number(choice.trim()) - 1;
-      const targetFolders = folders.filter((folder) => folder.id !== item.folderId);
-      const target = targetFolders[idx];
-      if (!target) {
+      setMovingItem(item);
+    },
+    [folders.length],
+  );
+
+  const performMove = useCallback(
+    async (folderId: string) => {
+      if (!movingItem) {
         return;
       }
       setBusy(true);
       try {
-        await moveItem(item.id, target.id);
+        await moveItem(movingItem.id, folderId);
+        setMovingItem(null);
+        setActiveFolderId(folderId);
         await refresh();
       } finally {
         setBusy(false);
       }
     },
-    [folders, refresh],
+    [movingItem, refresh],
   );
 
   const handleRename = useCallback(
@@ -438,6 +435,59 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
       </section>
 
       <MediaPlayer item={playingItem} onClose={() => setPlayingItem(null)} />
+
+      {movingItem ? (
+        <div
+          className="player-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Move to folder"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setMovingItem(null);
+            }
+          }}
+        >
+          <div className="picker-dialog">
+            <header className="player-header">
+              <div className="player-titles">
+                <h2>Move &ldquo;{movingItem.title}&rdquo;</h2>
+                <p className="player-sub">Choose a destination folder</p>
+              </div>
+              <button
+                type="button"
+                className="player-close"
+                aria-label="Close"
+                onClick={() => setMovingItem(null)}
+              >
+                ×
+              </button>
+            </header>
+
+            <ul className="folder-picker-list">
+              {folders
+                .filter((folder) => folder.id !== movingItem.folderId)
+                .map((folder) => {
+                  const itemCount =
+                    manifest?.items.filter((entry) => entry.folderId === folder.id).length ?? 0;
+                  return (
+                    <li key={folder.id}>
+                      <button
+                        type="button"
+                        className="folder-picker-row"
+                        onClick={() => void performMove(folder.id)}
+                        disabled={busy}
+                      >
+                        <span className="folder-picker-name">{folder.name}</span>
+                        <span className="folder-count">{itemCount}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+            </ul>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
