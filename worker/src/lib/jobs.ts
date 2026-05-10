@@ -410,30 +410,32 @@ export async function getStreamUrl(
   const normalizedUrl = normalizeMediaSourceUrl(rawUrl);
   const useProxy = shouldUseProxyForUrl(normalizedUrl);
 
-  // Override the default player_client list: ios+tv specifically because
-  // their signed URLs aren't IP-bound. Pass via --extractor-args directly
-  // here so we don't disturb the global YT_DLP_PLAYER_CLIENTS env var that
-  // downloads/search rely on.
-  //
+  // Override the default player_client list. Use a broader set than just
+  // ios/tv:
+  //   - ios:  returns HLS (m3u8) for most videos. URLs not IP-bound.
+  //   - tv:   returns HLS too. URLs not IP-bound.
+  //   - mweb: typically returns progressive itag 18 (360p mp4) — our
+  //           best progressive fallback when HLS isn't available.
+  //   - android: similar to mweb, broader format coverage on some videos
+  //              that ios refuses (e.g. some news/political channels).
+  // None of these embed the requesting IP into the URL signature.
+  const playerClients = "ios,tv,mweb,android";
+
   // Format selection notes:
-  //   The ios / tv clients almost always return *HLS* (m3u8) for video,
-  //   not progressive MP4. iOS Safari plays HLS natively in <video>;
-  //   Android Chrome and desktop browsers need hls.js (we'll wire that
-  //   in if/when we support those targets — iPhone is the primary user
-  //   right now). Progressive itag 22 (720p) is largely retired by
-  //   YouTube and itag 18 (360p) is being phased out, so they only sit
-  //   in the fallback chain — relying on them as the primary selector
-  //   broke streams for most modern videos with "Requested format is
-  //   not available."
+  //   yt-dlp's `best` keyword in recent versions means "best *combined*
+  //   audio+video stream" — it does NOT fall back to adaptive formats.
+  //   So for videos that only have separate audio/video streams, plain
+  //   `best` returns "Requested format is not available." That's why
+  //   the chain has to be explicit and HLS-first: HLS variant URLs are
+  //   the only way to get a single playable URL for adaptive content.
   const formatSelector =
     type === "audio"
-      ? // For audio: prefer m4a (universally playable in <audio>),
-        // fall back to itag 140 (128 kbps m4a) or anything yt-dlp has.
+      ? // Audio: progressive m4a is universally available and tiny.
         "bestaudio[acodec^=mp4a]/bestaudio[ext=m4a]/140/bestaudio"
-      : // For video: prefer HLS (m3u8) which the ios client always has;
-        // fall back to any progressive https stream; last resort itag 18
-        // and just "best".
-        "best[protocol*=m3u8]/best[acodec!=none][vcodec!=none][protocol^=https]/22/18/best";
+      : // Video: HLS first (works in iOS Safari natively, and via
+        // hls.js elsewhere later); then progressive itag 18 from mweb;
+        // then any combined-format fallback.
+        "best[protocol*=m3u8]/best[ext=mp4][acodec!=none][vcodec!=none]/18/22/best";
 
   const args = [
     "--dump-single-json",
@@ -442,7 +444,7 @@ export async function getStreamUrl(
     "-f",
     formatSelector,
     "--extractor-args",
-    "youtube:player_client=ios,tv",
+    `youtube:player_client=${playerClients}`,
     ...(YT_DLP_PROXY && useProxy ? ["--proxy", YT_DLP_PROXY] : []),
     ...(YT_DLP_COOKIES && useProxy ? ["--cookies", YT_DLP_COOKIES] : []),
     ...(YT_DLP_REMOTE_COMPONENTS
