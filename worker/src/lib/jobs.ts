@@ -629,6 +629,16 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
     "10",
     "--retry-sleep",
     "5",
+    // Parallelize HLS / DASH fragment downloads. Many sites (adult tube
+    // sites in particular) serve content as HLS with hundreds of tiny
+    // segments. Downloading them serially through a residential proxy is
+    // bottlenecked by per-request latency, not bandwidth — a 3 MB/s exit
+    // can deliver only ~150 KiB/s of effective throughput on serial HLS.
+    // Pulling 16 fragments concurrently saturates the proxy's bandwidth.
+    // Ignored by yt-dlp for progressive (non-fragmented) downloads, so
+    // this is safe for plain MP4 / YouTube too.
+    "--concurrent-fragments",
+    "16",
     ...(FFMPEG_BINARY ? ["--ffmpeg-location", FFMPEG_BINARY] : []),
     "-o",
     outputTemplate,
