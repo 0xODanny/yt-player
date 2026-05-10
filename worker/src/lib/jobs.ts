@@ -441,10 +441,17 @@ export async function getStreamUrl(
   // gated, so we have to fall back to itag 18 too — the <audio>
   // element plays the audio track of an mp4 just fine, ignoring the
   // video. (We never ship the bytes, the browser fetches them.)
+  // yt-dlp gotcha: `bestaudio` is *strictly* audio-only — it skips formats
+  // that contain a video track even if their audio is what we want. So
+  // when only itag 18 (a progressive mp4 with audio+video) is available,
+  // `bestaudio` matches nothing and we fall through to the literal `18`
+  // anyway. Use `bestaudio*` (audio-or-anything-with-audio) as a more
+  // robust matcher and put `18` very early so the most reliable
+  // single-URL playable stream is preferred for music label content.
   const formatSelector =
     type === "audio"
-      ? "bestaudio[acodec^=mp4a]/bestaudio[ext=m4a]/140/bestaudio/18"
-      : "best[protocol*=m3u8]/best[ext=mp4][acodec!=none][vcodec!=none]/18/22/best";
+      ? "ba[acodec^=mp4a]/ba[ext=m4a]/140/18/ba*/b"
+      : "best[protocol*=m3u8]/b[ext=mp4][acodec!=none][vcodec!=none]/18/22/ba*+bv*/b";
 
   const args = [
     "--dump-single-json",
