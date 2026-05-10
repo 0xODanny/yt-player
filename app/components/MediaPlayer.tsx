@@ -10,7 +10,18 @@ type MediaPlayerProps = {
   onClose: () => void;
 };
 
-function isPipSupported(): boolean {
+// iOS Safari doesn't implement the W3C Picture-in-Picture API. Instead it
+// exposes Apple's WebKit-prefixed presentation-mode API on HTMLVideoElement.
+// Both must be considered for cross-platform support.
+type WebKitVideoElement = HTMLVideoElement & {
+  webkitSupportsPresentationMode?: (mode: "picture-in-picture") => boolean;
+  webkitSetPresentationMode?: (
+    mode: "inline" | "picture-in-picture" | "fullscreen",
+  ) => void;
+  webkitPresentationMode?: "inline" | "picture-in-picture" | "fullscreen";
+};
+
+function isStandardPipSupported(): boolean {
   if (typeof document === "undefined") {
     return false;
   }
@@ -19,6 +30,53 @@ function isPipSupported(): boolean {
       typeof HTMLVideoElement !== "undefined" &&
       "requestPictureInPicture" in HTMLVideoElement.prototype,
   );
+}
+
+function isWebkitPipSupported(video: HTMLVideoElement | null): boolean {
+  if (!video) {
+    return false;
+  }
+  const v = video as WebKitVideoElement;
+  return (
+    typeof v.webkitSupportsPresentationMode === "function" &&
+    v.webkitSupportsPresentationMode("picture-in-picture") === true
+  );
+}
+
+function videoIsInPip(video: HTMLVideoElement | null): boolean {
+  if (!video) {
+    return false;
+  }
+  if (typeof document !== "undefined" && document.pictureInPictureElement === video) {
+    return true;
+  }
+  return (video as WebKitVideoElement).webkitPresentationMode === "picture-in-picture";
+}
+
+async function enterPip(video: HTMLVideoElement): Promise<void> {
+  // Prefer WebKit's API on iOS — the standard one will throw or be missing.
+  const webkit = video as WebKitVideoElement;
+  if (typeof webkit.webkitSetPresentationMode === "function") {
+    webkit.webkitSetPresentationMode("picture-in-picture");
+    return;
+  }
+  if (typeof video.requestPictureInPicture === "function") {
+    await video.requestPictureInPicture();
+  }
+}
+
+async function exitPip(video: HTMLVideoElement): Promise<void> {
+  const webkit = video as WebKitVideoElement;
+  if (
+    typeof webkit.webkitSetPresentationMode === "function" &&
+    webkit.webkitPresentationMode === "picture-in-picture"
+  ) {
+    webkit.webkitSetPresentationMode("inline");
+    return;
+  }
+  if (typeof document !== "undefined" && document.pictureInPictureElement) {
+    await document.exitPictureInPicture();
+  }
 }
 
 export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
@@ -30,6 +88,7 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
   // override for this playback only without changing the global setting.
   const [audioOnly, setAudioOnly] = useState<boolean>(false);
   const [isPip, setIsPip] = useState(false);
+  const [pipAvailable, setPipAvailable] = useState<boolean>(false);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
 
@@ -244,35 +303,43 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
 
   // Track whether the video element is currently in PiP so the button label
   // and aria-pressed state stay accurate (user might exit PiP via the
-  // floating window's own close button).
+  // floating window's own close button). Listens to both the standard
+  // events (Chrome/Edge) and Apple's webkitpresentationmodechanged event.
+  // Also probes for PiP support at this point — for iOS the support check
+  // requires the actual video element to exist.
   useEffect(() => {
     const el = mediaRef.current;
     if (!el || !(el instanceof HTMLVideoElement)) {
+      setPipAvailable(false);
       return;
     }
+    setPipAvailable(isStandardPipSupported() || isWebkitPipSupported(el));
     const onEnter = () => setIsPip(true);
     const onLeave = () => setIsPip(false);
+    const onWebkitChange = () => setIsPip(videoIsInPip(el));
     el.addEventListener("enterpictureinpicture", onEnter);
     el.addEventListener("leavepictureinpicture", onLeave);
+    el.addEventListener("webkitpresentationmodechanged", onWebkitChange as EventListener);
     return () => {
       el.removeEventListener("enterpictureinpicture", onEnter);
       el.removeEventListener("leavepictureinpicture", onLeave);
+      el.removeEventListener(
+        "webkitpresentationmodechanged",
+        onWebkitChange as EventListener,
+      );
     };
   }, [objectUrl, useAudioElement]);
 
   // Auto-Picture-in-Picture: when the page becomes hidden (user switched
   // apps or locked the screen) and we have a playing <video> element, ask
   // the browser to enter PiP so playback continues in a floating window.
-  // Gated by the user's global setting. iOS Safari supports this since 14;
-  // Android Chrome supports it; desktop Chrome/Edge support it.
+  //
+  // On iOS Safari we ALSO set the `autoPictureInPicture` attribute on the
+  // video element below — that's the only way to get OS-driven auto-PiP on
+  // iPhone (Safari ignores programmatic webkitSetPresentationMode without
+  // a user gesture). On other platforms we drive it from visibilitychange.
   useEffect(() => {
-    if (!settings.pipAuto) {
-      return;
-    }
-    if (!isPipSupported()) {
-      return;
-    }
-    if (useAudioElement) {
+    if (!settings.pipAuto || useAudioElement) {
       return;
     }
 
@@ -287,13 +354,13 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
       if (el.paused || el.ended) {
         return;
       }
-      if (document.pictureInPictureElement === el) {
+      if (videoIsInPip(el)) {
         return;
       }
-      el.requestPictureInPicture().catch(() => {
+      void enterPip(el).catch(() => {
         // PiP can be refused — user gesture missing, OS denies, etc.
-        // Failing silently is fine; standard background-pause behavior
-        // takes over.
+        // Failing silently is fine; the lock-screen Now Playing widget
+        // (Media Session) still takes over for audio.
       });
     };
 
@@ -301,19 +368,42 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [settings.pipAuto, useAudioElement, objectUrl]);
 
-  async function togglePip() {
-    if (!isPipSupported()) {
+  // Set / unset the iOS-specific autoPictureInPicture attribute when the
+  // setting flips. React doesn't pass through unknown HTML attributes for
+  // SSR safety, so we reflect it manually on the live DOM node.
+  useEffect(() => {
+    const el = mediaRef.current;
+    if (!el || !(el instanceof HTMLVideoElement)) {
       return;
     }
+    if (settings.pipAuto && !useAudioElement) {
+      el.setAttribute("autopictureinpicture", "");
+      // Apple's IDL property name is camelCased.
+      try {
+        (el as unknown as { autoPictureInPicture?: boolean }).autoPictureInPicture = true;
+      } catch {
+        // ignore — only Safari implements this property
+      }
+    } else {
+      el.removeAttribute("autopictureinpicture");
+      try {
+        (el as unknown as { autoPictureInPicture?: boolean }).autoPictureInPicture = false;
+      } catch {
+        // ignore
+      }
+    }
+  }, [settings.pipAuto, useAudioElement, objectUrl]);
+
+  async function togglePip() {
     const el = mediaRef.current;
     if (!(el instanceof HTMLVideoElement)) {
       return;
     }
     try {
-      if (document.pictureInPictureElement === el) {
-        await document.exitPictureInPicture();
+      if (videoIsInPip(el)) {
+        await exitPip(el);
       } else {
-        await el.requestPictureInPicture();
+        await enterPip(el);
       }
     } catch {
       // ignore — PiP can be refused for many reasons
@@ -325,7 +415,7 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
   }
 
   const showAudioToggle = item.type === "video";
-  const showPipButton = item.type === "video" && !useAudioElement && isPipSupported();
+  const showPipButton = item.type === "video" && !useAudioElement && pipAvailable;
 
   return (
     <div
@@ -382,9 +472,11 @@ export function MediaPlayer({ item, onClose }: MediaPlayerProps) {
             {item.type === "video"
               ? audioOnly
                 ? "Plays with screen off · saves battery"
-                : settings.pipAuto && isPipSupported()
-                  ? "Auto-PiP on app switch · audio-only also available"
-                  : "Switch to audio-only or use PiP for screen-off playback"
+                : settings.pipAuto && pipAvailable
+                  ? "Auto-PiP when you swipe up · audio-only also available"
+                  : pipAvailable
+                    ? "Switch to audio-only or use PiP for screen-off playback"
+                    : "Switch to audio-only for screen-off playback"
               : "Plays with screen off · lock-screen controls available"}
           </span>
         </div>
