@@ -40,6 +40,12 @@ body {
   touch-action: pan-y;
   overscroll-behavior-x: none;
   -webkit-text-size-adjust: 100%;
+  /* Honor the device's safe area in landscape on notched iPhones so the
+     content doesn't sit under the camera notch / Dynamic Island. The
+     vertical safe area is handled by .shell padding instead so the
+     background gradient still extends edge-to-edge. */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
 button,
@@ -61,7 +67,11 @@ code {
 .shell {
   width: min(720px, calc(100% - 24px));
   margin: 0 auto;
-  padding: 18px 0 calc(48px + env(safe-area-inset-bottom));
+  /* Top: clear the iOS status bar / Dynamic Island / notch.
+     Bottom: clear the iOS home-bar gesture area. */
+  padding:
+    calc(14px + env(safe-area-inset-top)) 0
+    calc(48px + env(safe-area-inset-bottom));
   display: grid;
   gap: 14px;
 }
