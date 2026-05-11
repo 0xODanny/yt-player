@@ -472,17 +472,21 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
 
       const url = youtubeWatchUrl(result.videoId);
 
-      // Direct-CDN download path: ask the worker for the same signed
-      // googlevideo URL we'd use for streaming, then fetch the bytes
-      // straight from CDN → phone → OPFS, with a local AbortController
-      // so the Stop button actually cuts the connection. Worker only
-      // burns ~50 KB of residential proxy bandwidth (the metadata
-      // call) and never touches the file body.
+      // Direct-CDN download path: ask the worker to hand back the HLS
+      // manifest URL, then the phone fetches the manifest + every
+      // segment straight from googlevideo.com (HLS endpoints carry
+      // Access-Control-Allow-Origin: *) and we glue the segments into
+      // a Blob locally. Net effect: zero IPRoyal residential bandwidth
+      // (only the ~50 KB metadata roundtrip needs the proxy) AND zero
+      // droplet egress (the droplet's datacenter IP is on googlevideo's
+      // ASN blocklist, so we never even try to fetch segments from it).
       //
-      // Quality is capped at whatever the ios/tv/mweb/android player
-      // clients still serve without a PO Token — usually itag 18
-      // (360p mp4 + AAC) or itag 140 (m4a 128 kbps). This is the
-      // trade-off for $0 worker bandwidth.
+      // Quality is whatever HLS variant the ios/tv/mweb/android player
+      // clients still expose without a PO Token — usually a muxed
+      // ~360p mp4 stream for video, single-bitrate m4a for audio. If
+      // a particular video doesn't expose any HLS variants, the worker
+      // returns a 502 and the user can fall back to the worker
+      // download path for that one video.
       if (isDirectDownloadPreset(preset)) {
         const directType: "audio" | "video" =
           preset === "direct-audio" ? "audio" : "video";
@@ -498,26 +502,23 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
 
         try {
           const stream = await fetchStreamSource(url, directType, {
-            progressive: true,
+            forSave: true,
             signal: controller.signal,
           });
 
           // Sniff a sensible MIME type from yt-dlp's reported container
           // so the resulting Blob is tagged correctly (helps OPFS /
           // <audio>/<video> pick the right decoder on every platform).
+          // For HLS we usually end up muxing mp4 fragments so video/mp4
+          // (or audio/mp4 for the audio-only case) is correct
+          // regardless of yt-dlp's `ext` hint.
           const mimeHint =
-            stream.ext === "m4a"
-              ? "audio/mp4"
-              : stream.ext === "mp4"
-                ? directType === "audio"
-                  ? "audio/mp4"
-                  : "video/mp4"
-                : undefined;
+            directType === "audio" ? "audio/mp4" : "video/mp4";
 
           const blob = await downloadStreamToBlob(stream.url, {
             signal: controller.signal,
             mimeHint,
-            userAgent: stream.httpHeaders?.["User-Agent"],
+            protocol: stream.protocol,
             onProgress: (loaded, total) => {
               const pct =
                 total && total > 0
@@ -533,15 +534,16 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
 
           // Save to library. We pin format=mp3 for audio so the OPFS
           // filename ends with .mp3 and the library UI treats it as
-          // audio — the actual bytes are m4a/mp4 but stay sandboxed
-          // inside OPFS so the extension mismatch is invisible to the
-          // user and the in-PWA <audio> tag sniffs the real container.
+          // audio — the actual bytes are an mp4 audio track but stay
+          // sandboxed inside OPFS so the extension mismatch is
+          // invisible and the in-PWA <audio> tag sniffs the real
+          // container.
           const itemFormat: "mp3" | "mp4" =
             directType === "audio" ? "mp3" : "mp4";
           const qualityLabel =
             directType === "audio"
-              ? "audio · direct CDN"
-              : "video · direct CDN (~360p)";
+              ? "audio · HLS (phone data)"
+              : "video · HLS (phone data, ~360p)";
 
           const item = await addItem({
             blob,

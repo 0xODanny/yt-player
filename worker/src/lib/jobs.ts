@@ -554,11 +554,11 @@ export type WorkerStreamResult = {
 export async function getStreamUrl(
   rawUrl: string,
   type: "audio" | "video",
-  options: { progressive?: boolean } = {},
+  options: { forSave?: boolean } = {},
 ): Promise<WorkerStreamResult> {
   const normalizedUrl = normalizeMediaSourceUrl(rawUrl);
   const useProxy = shouldUseProxyForUrl(normalizedUrl);
-  const progressive = Boolean(options.progressive);
+  const forSave = Boolean(options.forSave);
 
   // Override the default player_client list. Use a broader set than just
   // ios/tv:
@@ -599,18 +599,28 @@ export async function getStreamUrl(
   // robust matcher and put `18` very early so the most reliable
   // single-URL playable stream is preferred for music label content.
   //
-  // PROGRESSIVE MODE (download via direct CDN):
-  //   For the "save without paying proxy bytes" path the browser is going
-  //   to fetch() the URL itself and write the body to OPFS. That only
-  //   works for a SINGLE-FILE response — HLS m3u8 playlists are not a
-  //   real file, they're a manifest pointing at hundreds of segments.
-  //   So when progressive=true we exclude m3u8 from the chain entirely
-  //   and bias hard toward itag 18 / 140 / mp4-with-https, all of which
-  //   are single signed-CDN URLs the browser can download in one shot.
-  const formatSelector = progressive
+  // FOR-SAVE MODE (client-side HLS download to OPFS):
+  //   The original "fetch the progressive googlevideo URL straight to
+  //   OPFS" idea died on two facts:
+  //     1. googlevideo.com does NOT send Access-Control-Allow-Origin
+  //        for `videoplayback?...` (it only does for HLS), so the
+  //        browser fetch() fails CORS.
+  //     2. We tried proxying the bytes through the worker. googlevideo
+  //        rejects datacenter ASNs (DigitalOcean, AWS, etc.) with an
+  //        empty-body 403, so the worker can't fetch them either
+  //        from its own IP.
+  //   The only path left that keeps the bytes off IPRoyal AND off the
+  //   droplet is HLS-client-side: the phone (residential IP) fetches
+  //   the m3u8 + segments directly from googlevideo, since HLS *does*
+  //   carry CORS. So when forSave=true we force HLS-only and let the
+  //   frontend assemble segments into a Blob. If no muxed HLS variant
+  //   exists for a given video, yt-dlp returns "Requested format is
+  //   not available" and the frontend surfaces that — the user can
+  //   fall back to the regular worker download for that one video.
+  const formatSelector = forSave
     ? type === "audio"
-      ? "140/ba[ext=m4a][protocol^=https]/18/ba*[acodec^=mp4a][protocol^=https]/b[ext=mp4][protocol^=https]"
-      : "18/22/b[ext=mp4][acodec!=none][vcodec!=none][protocol^=https]/b[ext=mp4][protocol^=https]"
+      ? "ba[protocol*=m3u8]/b[protocol*=m3u8]"
+      : "best[protocol*=m3u8][acodec!=none][vcodec!=none]/b[protocol*=m3u8]"
     : type === "audio"
       ? "ba[acodec^=mp4a]/ba[ext=m4a]/140/18/ba*/b"
       : "best[protocol*=m3u8]/b[ext=mp4][acodec!=none][vcodec!=none]/18/22/ba*+bv*/b";

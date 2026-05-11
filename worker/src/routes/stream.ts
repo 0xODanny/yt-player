@@ -39,6 +39,7 @@ streamRouter.post("/", async (request, response) => {
   const body = request.body as {
     url?: unknown;
     type?: unknown;
+    forSave?: unknown;
     progressive?: unknown;
   };
 
@@ -48,13 +49,20 @@ streamRouter.post("/", async (request, response) => {
   }
 
   const type = body.type === "audio" ? "audio" : "video";
-  // `progressive` opts into the single-file format chain so the URL can
-  // be fetched by the browser and written to OPFS in one go (vs. HLS
-  // which would require segment-by-segment assembly client-side).
-  const progressive = body.progressive === true;
+  // `forSave` opts into the HLS-required format chain so the frontend
+  // can fetch the m3u8 + segments directly from googlevideo (which
+  // serves CORS headers on HLS) and assemble them into a Blob. Required
+  // because the alternate "single-file URL + worker byte proxy" path is
+  // blocked end-to-end: googlevideo strips CORS from progressive URLs,
+  // and proxying them through the droplet's datacenter IP gets 403'd by
+  // googlevideo's ASN blocklist.
+  // We accept the legacy `progressive: true` flag too for older PWA
+  // clients still in cache — the semantics flipped but treating both as
+  // "use the for-save chain" is the correct mapping in this codebase.
+  const forSave = body.forSave === true || body.progressive === true;
 
   try {
-    const result = await getStreamUrl(body.url, type, { progressive });
+    const result = await getStreamUrl(body.url, type, { forSave });
     response.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Stream lookup failed.";

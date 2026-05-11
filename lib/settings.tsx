@@ -30,12 +30,15 @@ export type SearchPreset =
   | "video-1080p"
   | "stream-audio"
   | "stream-video"
-  // Direct-CDN download: phone fetches the same signed googlevideo URL
-  // we use for streaming and writes the bytes to OPFS itself, so the
-  // worker only pays metadata-roundtrip proxy bandwidth (~50 KB) and
-  // never touches the actual file. Quality is whatever the ios/tv/mweb/
-  // android player clients still serve without a PO Token — typically
-  // itag 18 (360p mp4 with AAC) or itag 140 (m4a 128 kbps).
+  // Direct-CDN HLS download: phone pulls the m3u8 manifest + every
+  // segment straight from googlevideo.com (HLS endpoints serve
+  // Access-Control-Allow-Origin: *) and we assemble the segments into
+  // a Blob locally. Worker only pays the ~50 KB metadata roundtrip
+  // through IPRoyal; the actual file body never touches the proxy or
+  // the droplet. Quality is whatever the ios/tv/mweb/android player
+  // clients still expose as a muxed HLS variant without a PO Token —
+  // typically ~360p mp4. Falls back to "no HLS available, use the
+  // worker download path" on videos that don't expose one.
   | "direct-audio"
   | "direct-video";
 
@@ -94,13 +97,13 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     key: "searchPreset",
     label: "Default action from search",
     description:
-      "What happens when you tap a result. Stream plays the video directly (ad-free, your phone data). Save (direct) grabs the same CDN URL the stream uses — quality is ~360p but no paid proxy bandwidth is consumed. Download via worker uses yt-dlp for full quality and goes through the paid IPRoyal proxy.",
+      "What happens when you tap a result. Stream plays the video directly (ad-free, your phone data). Save (HLS) pulls the m3u8 + segments straight from CDN to your phone — quality is whatever HLS variant YouTube exposes (usually ~360p) and no paid proxy bandwidth is consumed. Download via worker uses yt-dlp for full quality and goes through the paid IPRoyal proxy.",
     section: "Search",
     options: [
       { value: "stream-audio", label: "Stream audio (no save, ad-free)" },
       { value: "stream-video", label: "Stream video (no save, ad-free)" },
-      { value: "direct-audio", label: "Save audio (direct CDN, no proxy data)" },
-      { value: "direct-video", label: "Save video (direct CDN, no proxy data)" },
+      { value: "direct-audio", label: "Save audio (HLS, phone data only)" },
+      { value: "direct-video", label: "Save video (HLS, phone data only)" },
       { value: "mp3", label: "Download MP3 via worker (~5 MB)" },
       { value: "video-144p", label: "Download 144p via worker (~12 MB)" },
       { value: "video-240p", label: "Download 240p via worker (~25 MB)" },
