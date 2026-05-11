@@ -107,20 +107,50 @@ export async function fetchStreamSource(
 }
 
 /**
- * Fetch a resolved stream URL and return a single Blob, reporting
- * progress as bytes arrive. Used by the direct-CDN download path so we
- * can save the file to OPFS without ever sending bytes through the
- * worker (and therefore without burning IPRoyal residential bandwidth).
+ * Build the worker-side byte-proxy URL for a resolved googlevideo
+ * stream URL. We route through the worker (not phone → CDN directly)
+ * because googlevideo.com does not send Access-Control-Allow-Origin
+ * for the progressive `videoplayback?...` endpoint, which means
+ * fetch().then(r => r.blob()) fails CORS in every browser. The worker
+ * fetches it from the droplet's bare IP (no IPRoyal — the signed
+ * URL is already resolved, googlevideo doesn't care which IP retrieves
+ * it) and emits the bytes under CORS headers we control.
+ *
+ * Cost trade-off vs. the original "phone fetches CDN directly" idea:
+ *   - IPRoyal residential proxy: still zero bytes for the file body
+ *     (only the ~50 KB metadata roundtrip needs IPRoyal). This was
+ *     the paid/metered resource, and the whole point of the feature.
+ *   - DigitalOcean droplet egress: now pays the bytes (~5 MB / song,
+ *     ~50 MB / video). Included in the base plan up to 1 TB/mo,
+ *     $0.01/GB after that. Effectively free.
+ */
+function getStreamProxyUrl(streamUrl: string): EndpointConfig {
+  const workerUrl = process.env.NEXT_PUBLIC_WORKER_API_URL?.trim();
+  if (!workerUrl) {
+    return {
+      url: `/api/stream/proxy?url=${encodeURIComponent(streamUrl)}`,
+      isExternal: false,
+    };
+  }
+  return {
+    url: `${workerUrl.replace(/\/$/, "")}/stream/proxy?url=${encodeURIComponent(streamUrl)}`,
+    isExternal: true,
+  };
+}
+
+/**
+ * Fetch a resolved stream URL through the worker byte-proxy and return
+ * a single Blob, reporting progress as bytes arrive. Used by the
+ * direct-CDN download path so we can save the file to OPFS without
+ * ever sending bytes through the residential IPRoyal proxy.
  *
  * Why we hand-roll the reader loop instead of `response.blob()`:
  *   - We need to surface progress to the UI for downloads big enough
  *     that the user might cancel mid-fetch.
  *   - We want to honor an AbortSignal so the Stop button on the
- *     direct-download row actually cuts the connection.
- *
- * CORS: googlevideo.com URLs ship `Access-Control-Allow-Origin: *`
- * (it's what lets hls.js work in non-Safari browsers), so a
- * cross-origin fetch from the PWA succeeds without any proxy hop.
+ *     direct-download row actually cuts the connection (the worker
+ *     in turn aborts the upstream googlevideo fetch so droplet
+ *     bandwidth isn't burned on a cancelled download).
  */
 export async function downloadStreamToBlob(
   streamUrl: string,
@@ -130,8 +160,16 @@ export async function downloadStreamToBlob(
     onProgress?: (loaded: number, total: number | null) => void;
   } = {},
 ): Promise<Blob> {
-  const response = await fetch(streamUrl, {
+  const proxy = getStreamProxyUrl(streamUrl);
+  const headers: HeadersInit = {};
+  const apiKey = process.env.NEXT_PUBLIC_WORKER_API_KEY?.trim();
+  if (proxy.isExternal && apiKey) {
+    (headers as Record<string, string>).Authorization = `Bearer ${apiKey}`;
+  }
+
+  const response = await fetch(proxy.url, {
     signal: options.signal,
+    headers,
   });
 
   if (!response.ok || !response.body) {
@@ -158,6 +196,9 @@ export async function downloadStreamToBlob(
   }
 
   return new Blob(chunks as BlobPart[], {
-    type: options.mimeHint || response.headers.get("content-type") || "application/octet-stream",
+    type:
+      options.mimeHint ||
+      response.headers.get("content-type") ||
+      "application/octet-stream",
   });
 }

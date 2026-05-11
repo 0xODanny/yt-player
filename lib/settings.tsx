@@ -94,13 +94,13 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     key: "searchPreset",
     label: "Default action from search",
     description:
-      "What happens when you tap a result in the Search tab. Stream plays the video directly (ad-free, phone data). Save (direct) fetches the same CDN URL the stream uses and stores it offline — quality is ~360p but the worker burns no proxy bandwidth. Download (worker) uses yt-dlp on the server for full quality but costs paid IPRoyal data.",
+      "What happens when you tap a result. Stream plays the video directly (ad-free, your phone data). Save (direct) grabs the same CDN URL the stream uses — quality is ~360p but no paid proxy bandwidth is consumed. Download via worker uses yt-dlp for full quality and goes through the paid IPRoyal proxy.",
     section: "Search",
     options: [
       { value: "stream-audio", label: "Stream audio (no save, ad-free)" },
       { value: "stream-video", label: "Stream video (no save, ad-free)" },
-      { value: "direct-audio", label: "Save audio (direct CDN, free)" },
-      { value: "direct-video", label: "Save video (direct CDN, free)" },
+      { value: "direct-audio", label: "Save audio (direct CDN, no proxy data)" },
+      { value: "direct-video", label: "Save video (direct CDN, no proxy data)" },
       { value: "mp3", label: "Download MP3 via worker (~5 MB)" },
       { value: "video-144p", label: "Download 144p via worker (~12 MB)" },
       { value: "video-240p", label: "Download 240p via worker (~25 MB)" },
