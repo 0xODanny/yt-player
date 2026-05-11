@@ -17,6 +17,82 @@ import { fetchStreamSource, type StreamSource } from "@/lib/stream";
 
 import { MediaPlayer } from "./MediaPlayer";
 
+/**
+ * iOS PWAs get suspended (and frequently restarted from scratch) when the
+ * user backgrounds the app or hands off to PiP. Keeping search state only
+ * in React memory means everything blanks the moment they return. Mirror
+ * the state into localStorage so navigating back lands them right where
+ * they left off.
+ */
+const SEARCH_STATE_KEY = "yt-local-tool:search-state";
+const RECENT_SEARCHES_KEY = "yt-local-tool:recent-searches";
+const RECENT_SEARCHES_LIMIT = 8;
+
+type PersistedSearchState = {
+  query: string;
+  results: SearchResult[];
+};
+
+function loadSearchState(): PersistedSearchState | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(SEARCH_STATE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as PersistedSearchState;
+    if (typeof parsed.query !== "string" || !Array.isArray(parsed.results)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveSearchState(state: PersistedSearchState) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(SEARCH_STATE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function loadRecentSearches(): string[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(RECENT_SEARCHES_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as string[];
+    return Array.isArray(parsed) ? parsed.slice(0, RECENT_SEARCHES_LIMIT) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentSearches(queries: string[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      RECENT_SEARCHES_KEY,
+      JSON.stringify(queries.slice(0, RECENT_SEARCHES_LIMIT)),
+    );
+  } catch {
+    // ignore
+  }
+}
+
 type SearchViewProps = {
   onLibraryChanged: () => void;
 };
@@ -98,9 +174,48 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   const [download, setDownload] = useState<DownloadState | null>(null);
   const [autoPlayItem, setAutoPlayItem] = useState<ManifestItem | null>(null);
   const [autoPlayStream, setAutoPlayStream] = useState<StreamSource | null>(null);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
   const preset = settings.searchPreset;
+
+  // Restore persisted state on mount so iOS PWA restarts don't blank
+  // out the user's search.
+  useEffect(() => {
+    const persisted = loadSearchState();
+    if (persisted) {
+      setQuery(persisted.query);
+      setResults(persisted.results);
+    }
+    setRecentSearches(loadRecentSearches());
+  }, []);
+
+  // Mirror query+results to localStorage whenever they change so we can
+  // restore on next mount. Empty results are still persisted so clearing
+  // a search also clears the persisted state.
+  useEffect(() => {
+    saveSearchState({ query, results });
+  }, [query, results]);
+
+  const pushRecentSearch = useCallback((q: string) => {
+    const trimmed = q.trim();
+    if (!trimmed) {
+      return;
+    }
+    setRecentSearches((current) => {
+      const filtered = current.filter(
+        (entry) => entry.toLowerCase() !== trimmed.toLowerCase(),
+      );
+      const next = [trimmed, ...filtered].slice(0, RECENT_SEARCHES_LIMIT);
+      saveRecentSearches(next);
+      return next;
+    });
+  }, []);
+
+  const clearRecentSearches = useCallback(() => {
+    saveRecentSearches([]);
+    setRecentSearches([]);
+  }, []);
 
   const runSearch = useCallback(
     async (q: string) => {
@@ -122,6 +237,9 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
         const found = await searchVideos(trimmed, { signal: controller.signal });
         if (!controller.signal.aborted) {
           setResults(found);
+          if (found.length > 0) {
+            pushRecentSearch(trimmed);
+          }
         }
       } catch (error) {
         if ((error as Error).name === "AbortError") {
@@ -139,7 +257,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
         }
       }
     },
-    [],
+    [pushRecentSearch],
   );
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -429,6 +547,34 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
             </div>
             <p>{searchError}</p>
           </div>
+        </section>
+      ) : null}
+
+      {recentSearches.length > 0 && results.length === 0 && !searching ? (
+        <section className="panel">
+          <div className="section-heading">
+            <h2>Recent searches</h2>
+            <button type="button" className="link-button" onClick={clearRecentSearches}>
+              Clear
+            </button>
+          </div>
+          <ul className="recent-searches">
+            {recentSearches.map((q) => (
+              <li key={q}>
+                <button
+                  type="button"
+                  className="recent-search-chip"
+                  onClick={() => {
+                    setQuery(q);
+                    void runSearch(q);
+                  }}
+                  title={`Search "${q}" again`}
+                >
+                  {q}
+                </button>
+              </li>
+            ))}
+          </ul>
         </section>
       ) : null}
 

@@ -1,8 +1,9 @@
 {
+  "id": "yt-local-tool",
   "name": "YT Local Tool",
   "short_name": "YT Tool",
   "description": "Local utility for downloading non-copyrighted YouTube and direct media URLs.",
-  "start_url": "/",
+  "start_url": "/?utm_source=pwa",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
