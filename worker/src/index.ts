@@ -20,8 +20,32 @@ import { streamRouter } from "./routes/stream";
 const app = express();
 const port = Number(process.env.PORT || 3001);
 
+// ALLOWED_ORIGIN supports a comma-separated list so the same worker
+// can serve the Vercel PWA (https://yt-player-ruby.vercel.app), the
+// custom-domain PWA (https://pepinho.lol), and the native Android
+// Capacitor wrapper. Capacitor 6's WebView with androidScheme="https"
+// reports its origin as exactly `https://localhost` for every API
+// request — that origin needs to be in the allow-list or the
+// preflight OPTIONS fails and the actual call never runs.
+const allowedOrigins = (process.env.ALLOWED_ORIGIN?.trim() || "http://localhost:3002")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+
 const corsOptions: cors.CorsOptions = {
-  origin: process.env.ALLOWED_ORIGIN?.trim() || "http://localhost:3002",
+  origin(origin, callback) {
+    // Allow same-origin / non-browser callers (no Origin header at
+    // all, e.g. curl, server-to-server, the worker hitting itself).
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error(`Origin not allowed: ${origin}`));
+  },
   methods: ["GET", "POST", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: false,
@@ -48,7 +72,7 @@ startDownloadCleanupLoop();
 app.listen(port, () => {
   console.log("yt-worker startup");
   console.log(`port: ${port}`);
-  console.log(`allowed origin: ${String(corsOptions.origin)}`);
+  console.log(`allowed origins: ${allowedOrigins.join(", ")}`);
   console.log(`worker api secret configured: ${Boolean(process.env.WORKER_API_SECRET?.trim())}`);
   console.log(`trust proxy: 1 (X-Forwarded-Proto honored)`);
   console.log(`yt-dlp cookies file: ${process.env.YT_DLP_COOKIES?.trim() || "(none)"}`);
