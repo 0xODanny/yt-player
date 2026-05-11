@@ -29,7 +29,15 @@ export type SearchPreset =
   | "video-720p"
   | "video-1080p"
   | "stream-audio"
-  | "stream-video";
+  | "stream-video"
+  // Direct-CDN download: phone fetches the same signed googlevideo URL
+  // we use for streaming and writes the bytes to OPFS itself, so the
+  // worker only pays metadata-roundtrip proxy bandwidth (~50 KB) and
+  // never touches the actual file. Quality is whatever the ios/tv/mweb/
+  // android player clients still serve without a PO Token — typically
+  // itag 18 (360p mp4 with AAC) or itag 140 (m4a 128 kbps).
+  | "direct-audio"
+  | "direct-video";
 
 export type Settings = {
   pipAuto: boolean;
@@ -86,17 +94,19 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     key: "searchPreset",
     label: "Default action from search",
     description:
-      "What happens when you tap a result in the Search tab. Stream plays a YouTube video directly without saving it (uses your phone's data, ad-free). Download saves the file to the in-app library so you can replay offline.",
+      "What happens when you tap a result in the Search tab. Stream plays the video directly (ad-free, phone data). Save (direct) fetches the same CDN URL the stream uses and stores it offline — quality is ~360p but the worker burns no proxy bandwidth. Download (worker) uses yt-dlp on the server for full quality but costs paid IPRoyal data.",
     section: "Search",
     options: [
       { value: "stream-audio", label: "Stream audio (no save, ad-free)" },
       { value: "stream-video", label: "Stream video (no save, ad-free)" },
-      { value: "mp3", label: "Download MP3 (~5 MB)" },
-      { value: "video-144p", label: "Download 144p (~12 MB)" },
-      { value: "video-240p", label: "Download 240p (~25 MB)" },
-      { value: "video-360p", label: "Download 360p (~50 MB)" },
-      { value: "video-720p", label: "Download 720p (~80 MB)" },
-      { value: "video-1080p", label: "Download 1080p (~150 MB)" },
+      { value: "direct-audio", label: "Save audio (direct CDN, free)" },
+      { value: "direct-video", label: "Save video (direct CDN, free)" },
+      { value: "mp3", label: "Download MP3 via worker (~5 MB)" },
+      { value: "video-144p", label: "Download 144p via worker (~12 MB)" },
+      { value: "video-240p", label: "Download 240p via worker (~25 MB)" },
+      { value: "video-360p", label: "Download 360p via worker (~50 MB)" },
+      { value: "video-720p", label: "Download 720p via worker (~80 MB)" },
+      { value: "video-1080p", label: "Download 1080p via worker (~150 MB)" },
     ],
   },
   {

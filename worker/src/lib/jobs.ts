@@ -501,6 +501,12 @@ export type WorkerStreamResult = {
    * or to wire up hls.js (needed on Chrome/Firefox).
    */
   protocol?: string;
+  /**
+   * Container reported by yt-dlp (e.g. "mp4", "m4a", "webm"). The
+   * direct-CDN download path on the frontend uses this to pick a sensible
+   * filename / MIME hint when saving the blob to the library.
+   */
+  ext?: string;
   title?: string;
   author?: string;
   thumbnail?: string;
@@ -538,9 +544,11 @@ export type WorkerStreamResult = {
 export async function getStreamUrl(
   rawUrl: string,
   type: "audio" | "video",
+  options: { progressive?: boolean } = {},
 ): Promise<WorkerStreamResult> {
   const normalizedUrl = normalizeMediaSourceUrl(rawUrl);
   const useProxy = shouldUseProxyForUrl(normalizedUrl);
+  const progressive = Boolean(options.progressive);
 
   // Override the default player_client list. Use a broader set than just
   // ios/tv:
@@ -580,8 +588,20 @@ export async function getStreamUrl(
   // anyway. Use `bestaudio*` (audio-or-anything-with-audio) as a more
   // robust matcher and put `18` very early so the most reliable
   // single-URL playable stream is preferred for music label content.
-  const formatSelector =
-    type === "audio"
+  //
+  // PROGRESSIVE MODE (download via direct CDN):
+  //   For the "save without paying proxy bytes" path the browser is going
+  //   to fetch() the URL itself and write the body to OPFS. That only
+  //   works for a SINGLE-FILE response — HLS m3u8 playlists are not a
+  //   real file, they're a manifest pointing at hundreds of segments.
+  //   So when progressive=true we exclude m3u8 from the chain entirely
+  //   and bias hard toward itag 18 / 140 / mp4-with-https, all of which
+  //   are single signed-CDN URLs the browser can download in one shot.
+  const formatSelector = progressive
+    ? type === "audio"
+      ? "140/ba[ext=m4a][protocol^=https]/18/ba*[acodec^=mp4a][protocol^=https]/b[ext=mp4][protocol^=https]"
+      : "18/22/b[ext=mp4][acodec!=none][vcodec!=none][protocol^=https]/b[ext=mp4][protocol^=https]"
+    : type === "audio"
       ? "ba[acodec^=mp4a]/ba[ext=m4a]/140/18/ba*/b"
       : "best[protocol*=m3u8]/b[ext=mp4][acodec!=none][vcodec!=none]/18/22/ba*+bv*/b";
 
@@ -608,8 +628,14 @@ export async function getStreamUrl(
 
   const info = JSON.parse(stdout) as YtDlpVideoInfo & {
     url?: string;
-    requested_formats?: Array<{ url?: string }>;
-    formats?: Array<{ url?: string; protocol?: string; format_id?: string }>;
+    ext?: string;
+    requested_formats?: Array<{ url?: string; ext?: string }>;
+    formats?: Array<{
+      url?: string;
+      protocol?: string;
+      format_id?: string;
+      ext?: string;
+    }>;
   };
 
   // For progressive formats yt-dlp puts the URL on the top-level `url`.
@@ -655,10 +681,19 @@ export async function getStreamUrl(
     protocol = matching?.protocol;
   }
 
+  // ext: top-level when a single format was selected, else the first
+  // requested_formats entry. Used by the frontend's direct-CDN download
+  // path to pick a sensible file extension when saving to OPFS.
+  const ext =
+    typeof info.ext === "string"
+      ? info.ext
+      : info.requested_formats?.[0]?.ext;
+
   return {
     url: directUrl,
     type,
     protocol,
+    ext,
     title: info.title || undefined,
     author: info.uploader || info.channel,
     thumbnail: info.thumbnail,

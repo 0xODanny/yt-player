@@ -23,6 +23,12 @@ export type StreamSource = {
    * "https" means a single progressive stream — plays everywhere.
    */
   protocol?: string;
+  /**
+   * Container extension reported by yt-dlp (e.g. "mp4", "m4a"). Used by
+   * the direct-CDN download path to pick a filename hint and label when
+   * the blob is saved to the OPFS library.
+   */
+  ext?: string;
   title?: string;
   author?: string;
   thumbnail?: string;
@@ -64,13 +70,21 @@ function getRequestHeaders(isExternal: boolean): HeadersInit {
 export async function fetchStreamSource(
   url: string,
   type: "audio" | "video",
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; progressive?: boolean } = {},
 ): Promise<StreamSource> {
   const endpoint = getStreamEndpoint();
   const response = await fetch(endpoint.url, {
     method: "POST",
     headers: getRequestHeaders(endpoint.isExternal),
-    body: JSON.stringify({ url, type }),
+    body: JSON.stringify({
+      url,
+      type,
+      // Only send `progressive: true` when the caller is going to
+      // download the URL via fetch() and save it to OPFS — that path
+      // can't handle HLS playlists. For plain streaming we leave this
+      // off so the worker still prefers HLS when it's available.
+      ...(options.progressive ? { progressive: true } : {}),
+    }),
     signal: options.signal,
   });
 
@@ -90,4 +104,60 @@ export async function fetchStreamSource(
   }
 
   return body;
+}
+
+/**
+ * Fetch a resolved stream URL and return a single Blob, reporting
+ * progress as bytes arrive. Used by the direct-CDN download path so we
+ * can save the file to OPFS without ever sending bytes through the
+ * worker (and therefore without burning IPRoyal residential bandwidth).
+ *
+ * Why we hand-roll the reader loop instead of `response.blob()`:
+ *   - We need to surface progress to the UI for downloads big enough
+ *     that the user might cancel mid-fetch.
+ *   - We want to honor an AbortSignal so the Stop button on the
+ *     direct-download row actually cuts the connection.
+ *
+ * CORS: googlevideo.com URLs ship `Access-Control-Allow-Origin: *`
+ * (it's what lets hls.js work in non-Safari browsers), so a
+ * cross-origin fetch from the PWA succeeds without any proxy hop.
+ */
+export async function downloadStreamToBlob(
+  streamUrl: string,
+  options: {
+    signal?: AbortSignal;
+    mimeHint?: string;
+    onProgress?: (loaded: number, total: number | null) => void;
+  } = {},
+): Promise<Blob> {
+  const response = await fetch(streamUrl, {
+    signal: options.signal,
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`Direct CDN download failed (${response.status}).`);
+  }
+
+  const contentLengthHeader = response.headers.get("content-length");
+  const total = contentLengthHeader ? Number(contentLengthHeader) : null;
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+
+  options.onProgress?.(0, Number.isFinite(total) ? (total as number) : null);
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    chunks.push(value);
+    loaded += value.byteLength;
+    options.onProgress?.(loaded, Number.isFinite(total) ? (total as number) : null);
+  }
+
+  return new Blob(chunks as BlobPart[], {
+    type: options.mimeHint || response.headers.get("content-type") || "application/octet-stream",
+  });
 }

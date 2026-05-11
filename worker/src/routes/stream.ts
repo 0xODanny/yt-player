@@ -20,7 +20,11 @@ streamRouter.use(requireWorkerAuth);
  * (~50KB). The actual video bytes flow phone ↔ googlevideo.com directly.
  */
 streamRouter.post("/", async (request, response) => {
-  const body = request.body as { url?: unknown; type?: unknown };
+  const body = request.body as {
+    url?: unknown;
+    type?: unknown;
+    progressive?: unknown;
+  };
 
   if (typeof body?.url !== "string" || !isValidMediaSourceUrl(body.url)) {
     response.status(400).json({ error: "A valid http(s) `url` is required." });
@@ -28,9 +32,13 @@ streamRouter.post("/", async (request, response) => {
   }
 
   const type = body.type === "audio" ? "audio" : "video";
+  // `progressive` opts into the single-file format chain so the URL can
+  // be fetched by the browser and written to OPFS in one go (vs. HLS
+  // which would require segment-by-segment assembly client-side).
+  const progressive = body.progressive === true;
 
   try {
-    const result = await getStreamUrl(body.url, type);
+    const result = await getStreamUrl(body.url, type, { progressive });
     response.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Stream lookup failed.";

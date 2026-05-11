@@ -19,7 +19,11 @@ import {
   type SearchResult,
 } from "@/lib/search";
 import { type SearchPreset, useSettings } from "@/lib/settings";
-import { fetchStreamSource, type StreamSource } from "@/lib/stream";
+import {
+  downloadStreamToBlob,
+  fetchStreamSource,
+  type StreamSource,
+} from "@/lib/stream";
 
 import { MediaPlayer } from "./MediaPlayer";
 
@@ -122,6 +126,17 @@ function isStreamPreset(preset: SearchPreset): boolean {
   return preset === "stream-audio" || preset === "stream-video";
 }
 
+/**
+ * "Direct" presets bypass the worker entirely for the actual bytes —
+ * the phone fetches the resolved googlevideo.com URL itself and pipes
+ * the response straight into OPFS. The trade-off is quality (capped at
+ * whatever the ios/tv/mweb/android player clients serve without a PO
+ * Token — usually 360p mp4) in exchange for $0 worker bandwidth.
+ */
+function isDirectDownloadPreset(preset: SearchPreset): boolean {
+  return preset === "direct-audio" || preset === "direct-video";
+}
+
 function presetToJobPayload(preset: SearchPreset): {
   format: JobPayload["format"];
   quality: JobPayload["quality"];
@@ -140,6 +155,8 @@ function presetToJobPayload(preset: SearchPreset): {
     case "mp3":
     case "stream-audio":
     case "stream-video":
+    case "direct-audio":
+    case "direct-video":
     default:
       return { format: "mp3", quality: "best" };
   }
@@ -161,6 +178,10 @@ function presetLabel(preset: SearchPreset): string {
       return "audio stream";
     case "stream-video":
       return "video stream";
+    case "direct-audio":
+      return "direct audio";
+    case "direct-video":
+      return "direct video";
     case "mp3":
     default:
       return "MP3 audio";
@@ -170,6 +191,8 @@ function presetLabel(preset: SearchPreset): string {
 const PRESET_OPTIONS: Array<{ value: SearchPreset; label: string }> = [
   { value: "stream-audio", label: "▶ Audio" },
   { value: "stream-video", label: "▶ Video" },
+  { value: "direct-audio", label: "⬇︎ Audio" },
+  { value: "direct-video", label: "⬇︎ Video" },
   { value: "mp3", label: "↓ MP3" },
   { value: "video-144p", label: "↓ 144p" },
   { value: "video-240p", label: "↓ 240p" },
@@ -189,6 +212,10 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   const [autoPlayStream, setAutoPlayStream] = useState<StreamSource | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  // Controller for an in-flight direct-CDN download (the bytes flow phone
+  // ↔ googlevideo.com directly, so `cancelJob` doesn't apply — we need
+  // a local AbortController to cut the fetch).
+  const directAbortRef = useRef<AbortController | null>(null);
 
   const preset = settings.searchPreset;
 
@@ -231,20 +258,33 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   }, []);
 
   /**
-   * Abort an in-flight download started from the search tab. Worker
-   * kills its yt-dlp child and reports the job as "cancelled"; we flip
-   * local state to match so the polling effect exits and the save-to-
-   * library code path is skipped — exactly the same contract as the
-   * cancel button on the Downloader tab.
+   * Abort whichever in-flight download applies to the current state:
+   *   - Worker job (download.jobId set): DELETE /jobs/:id so yt-dlp is
+   *     killed on the server and the partial file is cleaned up.
+   *   - Direct-CDN download (no jobId, bytes flowing phone ↔
+   *     googlevideo.com): abort the local fetch via AbortController so
+   *     the body stream stops and no more of the user's mobile data is
+   *     spent.
+   *
+   * Either way the local download state is flipped to "cancelled" so
+   * the polling effect exits, the save-to-library branch is skipped,
+   * and the single-active-download lock releases.
    */
-  const handleCancelDownload = useCallback(async (jobId: string) => {
-    try {
-      await cancelJob(jobId);
-    } catch {
-      // best-effort
+  const handleCancelDownload = useCallback(async () => {
+    directAbortRef.current?.abort();
+    directAbortRef.current = null;
+
+    const jobId = download?.jobId;
+    if (jobId) {
+      try {
+        await cancelJob(jobId);
+      } catch {
+        // best-effort
+      }
     }
+
     setDownload((current) =>
-      current && current.jobId === jobId
+      current
         ? {
             ...current,
             status: "cancelled" as const,
@@ -252,7 +292,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
           }
         : current,
     );
-  }, []);
+  }, [download?.jobId]);
 
   const runSearch = useCallback(
     async (q: string) => {
@@ -432,6 +472,122 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
 
       const url = youtubeWatchUrl(result.videoId);
 
+      // Direct-CDN download path: ask the worker for the same signed
+      // googlevideo URL we'd use for streaming, then fetch the bytes
+      // straight from CDN → phone → OPFS, with a local AbortController
+      // so the Stop button actually cuts the connection. Worker only
+      // burns ~50 KB of residential proxy bandwidth (the metadata
+      // call) and never touches the file body.
+      //
+      // Quality is capped at whatever the ios/tv/mweb/android player
+      // clients still serve without a PO Token — usually itag 18
+      // (360p mp4 + AAC) or itag 140 (m4a 128 kbps). This is the
+      // trade-off for $0 worker bandwidth.
+      if (isDirectDownloadPreset(preset)) {
+        const directType: "audio" | "video" =
+          preset === "direct-audio" ? "audio" : "video";
+
+        setDownload({
+          videoId: result.videoId,
+          status: "processing",
+          progress: 0,
+        });
+
+        const controller = new AbortController();
+        directAbortRef.current = controller;
+
+        try {
+          const stream = await fetchStreamSource(url, directType, {
+            progressive: true,
+            signal: controller.signal,
+          });
+
+          // Sniff a sensible MIME type from yt-dlp's reported container
+          // so the resulting Blob is tagged correctly (helps OPFS /
+          // <audio>/<video> pick the right decoder on every platform).
+          const mimeHint =
+            stream.ext === "m4a"
+              ? "audio/mp4"
+              : stream.ext === "mp4"
+                ? directType === "audio"
+                  ? "audio/mp4"
+                  : "video/mp4"
+                : undefined;
+
+          const blob = await downloadStreamToBlob(stream.url, {
+            signal: controller.signal,
+            mimeHint,
+            onProgress: (loaded, total) => {
+              const pct =
+                total && total > 0
+                  ? Math.min(99, Math.floor((loaded / total) * 100))
+                  : 0;
+              setDownload((current) =>
+                current && current.videoId === result.videoId
+                  ? { ...current, progress: pct }
+                  : current,
+              );
+            },
+          });
+
+          // Save to library. We pin format=mp3 for audio so the OPFS
+          // filename ends with .mp3 and the library UI treats it as
+          // audio — the actual bytes are m4a/mp4 but stay sandboxed
+          // inside OPFS so the extension mismatch is invisible to the
+          // user and the in-PWA <audio> tag sniffs the real container.
+          const itemFormat: "mp3" | "mp4" =
+            directType === "audio" ? "mp3" : "mp4";
+          const qualityLabel =
+            directType === "audio"
+              ? "audio · direct CDN"
+              : "video · direct CDN (~360p)";
+
+          const item = await addItem({
+            blob,
+            title: stream.title || result.title,
+            sourceUrl: url,
+            format: itemFormat,
+            quality: qualityLabel,
+            duration:
+              stream.duration ?? result.lengthSeconds ?? null,
+            thumbnail:
+              stream.thumbnail ||
+              pickThumbnail(result.thumbnails, 480)?.url,
+            author: stream.author || result.author,
+          });
+
+          directAbortRef.current = null;
+          setDownload({
+            videoId: result.videoId,
+            status: "complete",
+            progress: 100,
+          });
+          setAutoPlayItem(item);
+          onLibraryChanged();
+        } catch (error) {
+          directAbortRef.current = null;
+          if ((error as { name?: string })?.name === "AbortError") {
+            setDownload({
+              videoId: result.videoId,
+              status: "cancelled",
+              progress: 0,
+              message: "Cancelled by user.",
+            });
+          } else {
+            setDownload({
+              videoId: result.videoId,
+              status: "failed",
+              progress: 0,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Direct download failed.",
+            });
+          }
+        }
+        return;
+      }
+
       // Stream path: ask the worker to resolve a googlevideo.com URL we can
       // play directly, then open MediaPlayer with that URL. No download,
       // no library save, no IPRoyal bandwidth (just the tiny metadata
@@ -507,7 +663,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
         });
       }
     },
-    [download, preset],
+    [download, preset, onLibraryChanged],
   );
 
   const friendlyMessage = useMemo(() => {
@@ -667,15 +823,14 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
                               : "");
               const canCancel =
                 isThis &&
-                Boolean(download?.jobId) &&
                 (download?.status === "queued" || download?.status === "processing");
               return (
                 <li key={result.videoId} className="search-item">
-                  {canCancel && download?.jobId ? (
+                  {canCancel ? (
                     <button
                       type="button"
                       className="search-cancel"
-                      onClick={() => void handleCancelDownload(download.jobId as string)}
+                      onClick={() => void handleCancelDownload()}
                       aria-label="Stop download"
                       title="Stop download (won't save to library)"
                     >
