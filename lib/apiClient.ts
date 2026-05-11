@@ -12,7 +12,12 @@ export type JobPayload = {
     | "audio-only";
 };
 
-export type JobStatus = "queued" | "processing" | "complete" | "failed";
+export type JobStatus =
+  | "queued"
+  | "processing"
+  | "complete"
+  | "failed"
+  | "cancelled";
 
 export type JobMetadataFormat = {
   itag: number;
@@ -144,5 +149,34 @@ export async function getJob(jobId: string) {
   return {
     response,
     data,
+  };
+}
+
+/**
+ * Ask the worker to cancel a queued / in-flight job. The worker kills the
+ * underlying yt-dlp process (or aborts the in-flight fetch for direct media),
+ * removes any partial output file, and flips the job status to "cancelled"
+ * so callers polling getJob() see the final state. Returning early on 404
+ * (job already expired) and 409 (already terminal) is intentional — the
+ * UI just stops showing the stop button in either case.
+ */
+export async function cancelJob(jobId: string) {
+  const endpoint = getJobEndpoint(jobId);
+  const response = await fetch(endpoint.url, {
+    method: "DELETE",
+    headers: getRequestHeaders(endpoint.isExternal),
+  });
+
+  let data: JobStatusResponse | JobErrorResponse;
+  try {
+    data = (await response.json()) as JobStatusResponse | JobErrorResponse;
+  } catch {
+    data = { error: "Worker returned a non-JSON response." } as JobErrorResponse;
+  }
+  return {
+    response,
+    data: normalizeErrorResponse(response, data) as
+      | JobStatusResponse
+      | JobErrorResponse,
   };
 }

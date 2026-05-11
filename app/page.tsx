@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  cancelJob,
   createJob,
   getJob,
   type JobMetadata,
@@ -186,9 +187,15 @@ function statusLabel(status: JobStatusResponse["status"] | undefined): string {
       return "Complete";
     case "failed":
       return "Failed";
+    case "cancelled":
+      return "Cancelled";
     default:
       return "Idle";
   }
+}
+
+function isJobCancellable(status: JobStatusResponse["status"] | undefined) {
+  return status === "queued" || status === "processing";
 }
 
 function friendlyJobMessage(
@@ -234,6 +241,8 @@ function statusToneClass(status: JobStatusResponse["status"] | undefined): strin
       return "success";
     case "failed":
       return "error";
+    case "cancelled":
+      return "idle";
     case "queued":
     case "processing":
       return "active";
@@ -413,7 +422,12 @@ export default function HomePage() {
   );
 
   useEffect(() => {
-    if (!job?.id || job.status === "complete" || job.status === "failed") {
+    if (
+      !job?.id ||
+      job.status === "complete" ||
+      job.status === "failed" ||
+      job.status === "cancelled"
+    ) {
       return;
     }
 
@@ -596,6 +610,52 @@ export default function HomePage() {
       setIsSubmitting(false);
     }
   }
+
+  /**
+   * Ask the worker to kill an in-flight download. The worker stops the
+   * yt-dlp child, removes any partial output file, and reports the job
+   * as "cancelled" — the polling effect picks that up and stops fetching.
+   * Library auto-save is gated on status === "complete" so cancelled jobs
+   * never get saved.
+   */
+  const handleCancelJob = useCallback(
+    async (jobId: string) => {
+      try {
+        await cancelJob(jobId);
+      } catch {
+        // best-effort: even if the network call fails we still update
+        // the UI optimistically so the user gets feedback. Next poll
+        // will reconcile if the worker actually kept running.
+      }
+
+      // Locally flip status to "cancelled" so the polling effect exits
+      // and the auto-save guard short-circuits, regardless of whether
+      // the worker responded.
+      setJob((current) =>
+        current && current.id === jobId
+          ? {
+              ...current,
+              status: "cancelled",
+              message: "Cancelled by user.",
+            }
+          : current,
+      );
+
+      setRecentJobs((current) => {
+        const next = current.map((entry) =>
+          entry.id === jobId ? { ...entry, status: "cancelled" as const } : entry,
+        );
+        persistRecentJobs(next);
+        return next;
+      });
+
+      // Make sure we don't accidentally trigger the auto-save retry
+      // path if the job had already advanced to a "complete" tick that
+      // hadn't been processed yet.
+      autoSavedJobIds.current.add(jobId);
+    },
+    [],
+  );
 
   const reopenJob = useCallback(
     async (jobToReopen: RecentJob) => {
@@ -897,6 +957,22 @@ export default function HomePage() {
               </div>
               {job.message ? <p>{friendlyJobMessage(job.message, job.status)}</p> : null}
 
+              {isJobCancellable(job.status) ? (
+                <div className="download-row">
+                  <button
+                    type="button"
+                    className="cancel-button"
+                    onClick={() => void handleCancelJob(job.id)}
+                    title="Abort this download — the file will not be added to your library"
+                  >
+                    ■ Stop download
+                  </button>
+                  <span className="muted-text">
+                    Aborts before the file is saved, so no data is wasted.
+                  </span>
+                </div>
+              ) : null}
+
               {hasDownload && job.downloadUrl ? (
                 <div className="download-row">
                   <a className="download-link" href={job.downloadUrl} download>
@@ -990,6 +1066,17 @@ export default function HomePage() {
                   </span>
                 </button>
                 <div className="recent-actions">
+                  {isJobCancellable(entry.status) ? (
+                    <button
+                      type="button"
+                      className="recent-cancel"
+                      onClick={() => void handleCancelJob(entry.id)}
+                      aria-label="Stop download"
+                      title="Stop download (won't save to library)"
+                    >
+                      ■
+                    </button>
+                  ) : null}
                   {entry.downloadUrl ? (
                     <a
                       className="recent-download"

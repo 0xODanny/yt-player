@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import { requireWorkerAuth } from "../lib/auth";
 import {
+  cancelFakeWorkerJob,
   createFakeWorkerJob,
   getFakeWorkerJobStatus,
   isMetadataExtractionError,
@@ -55,6 +56,27 @@ jobsRouter.get("/:id", async (request, response) => {
   const baseUrl = explicitBaseUrl || `${request.protocol}://${host}`;
 
   response.json(await getFakeWorkerJobStatus(request.params.id, baseUrl));
+});
+
+jobsRouter.delete("/:id", async (request, response) => {
+  const result = await cancelFakeWorkerJob(request.params.id);
+
+  if (!result.ok) {
+    // 409 = conflict (already terminal); 404 = unknown / expired.
+    const statusCode = result.status === "failed" ? 404 : 409;
+    response.status(statusCode).json({
+      id: request.params.id,
+      status: result.status,
+      message: result.message,
+    });
+    return;
+  }
+
+  response.json({
+    id: request.params.id,
+    status: result.status,
+    message: result.message,
+  });
 });
 
 export { jobsRouter };

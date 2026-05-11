@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { createJob, getJob, type JobPayload, type JobStatusResponse } from "@/lib/apiClient";
+import {
+  cancelJob,
+  createJob,
+  getJob,
+  type JobPayload,
+  type JobStatusResponse,
+} from "@/lib/apiClient";
 import { addItem, type ManifestItem } from "@/lib/library";
 import {
   formatLength,
@@ -100,7 +106,14 @@ type SearchViewProps = {
 type DownloadState = {
   videoId: string;
   jobId?: string;
-  status: "queued" | "processing" | "saving" | "streaming" | "complete" | "failed";
+  status:
+    | "queued"
+    | "processing"
+    | "saving"
+    | "streaming"
+    | "complete"
+    | "failed"
+    | "cancelled";
   progress: number;
   message?: string;
 };
@@ -217,6 +230,30 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
     setRecentSearches([]);
   }, []);
 
+  /**
+   * Abort an in-flight download started from the search tab. Worker
+   * kills its yt-dlp child and reports the job as "cancelled"; we flip
+   * local state to match so the polling effect exits and the save-to-
+   * library code path is skipped — exactly the same contract as the
+   * cancel button on the Downloader tab.
+   */
+  const handleCancelDownload = useCallback(async (jobId: string) => {
+    try {
+      await cancelJob(jobId);
+    } catch {
+      // best-effort
+    }
+    setDownload((current) =>
+      current && current.jobId === jobId
+        ? {
+            ...current,
+            status: "cancelled" as const,
+            message: "Cancelled by user.",
+          }
+        : current,
+    );
+  }, []);
+
   const runSearch = useCallback(
     async (q: string) => {
       const trimmed = q.trim();
@@ -270,7 +307,12 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
     if (!download?.jobId) {
       return;
     }
-    if (download.status === "complete" || download.status === "failed" || download.status === "saving") {
+    if (
+      download.status === "complete" ||
+      download.status === "failed" ||
+      download.status === "saving" ||
+      download.status === "cancelled"
+    ) {
       return;
     }
 
@@ -379,7 +421,12 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
 
   const handleResultTap = useCallback(
     async (result: SearchResult) => {
-      if (download && download.status !== "complete" && download.status !== "failed") {
+      if (
+        download &&
+        download.status !== "complete" &&
+        download.status !== "failed" &&
+        download.status !== "cancelled"
+      ) {
         return; // single active job at a time
       }
 
@@ -591,15 +638,15 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
               const length = formatLength(result.lengthSeconds);
               const views = formatViewCount(result.viewCount);
               const isThis = download?.videoId === result.videoId;
+              const isTerminal =
+                download?.status === "complete" ||
+                download?.status === "failed" ||
+                download?.status === "cancelled";
               const otherActive =
                 download &&
                 download.videoId !== result.videoId &&
-                download.status !== "complete" &&
-                download.status !== "failed";
-              const isDownloading =
-                isThis &&
-                download?.status !== "complete" &&
-                download?.status !== "failed";
+                !isTerminal;
+              const isDownloading = isThis && !isTerminal;
               const progress = isThis ? Math.round(download?.progress ?? 0) : 0;
               const stateLabel =
                 isThis &&
@@ -615,9 +662,26 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
                           ? isStreamPreset(preset) ? "Streaming" : "Saved"
                           : download?.status === "failed"
                             ? "Failed"
-                            : "");
+                            : download?.status === "cancelled"
+                              ? "Cancelled"
+                              : "");
+              const canCancel =
+                isThis &&
+                Boolean(download?.jobId) &&
+                (download?.status === "queued" || download?.status === "processing");
               return (
                 <li key={result.videoId} className="search-item">
+                  {canCancel && download?.jobId ? (
+                    <button
+                      type="button"
+                      className="search-cancel"
+                      onClick={() => void handleCancelDownload(download.jobId as string)}
+                      aria-label="Stop download"
+                      title="Stop download (won't save to library)"
+                    >
+                      ■
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="search-row"

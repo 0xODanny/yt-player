@@ -589,7 +589,8 @@ code {
 }
 
 .recent-download,
-.recent-remove {
+.recent-remove,
+.recent-cancel {
   display: inline-grid;
   place-items: center;
   width: 32px;
@@ -609,6 +610,18 @@ code {
 
 .recent-download:hover {
   background: rgba(97, 218, 251, 0.08);
+}
+
+.recent-cancel {
+  color: var(--danger);
+  border-color: rgba(255, 120, 120, 0.35);
+  background: rgba(255, 120, 120, 0.06);
+  font-size: 0.8rem;
+}
+
+.recent-cancel:hover,
+.recent-cancel:active {
+  background: rgba(255, 120, 120, 0.14);
 }
 
 .recent-remove:hover {
@@ -667,6 +680,28 @@ code {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.cancel-button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 120, 120, 0.35);
+  background: rgba(255, 120, 120, 0.1);
+  color: var(--danger);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.cancel-button:hover,
+.cancel-button:active {
+  background: rgba(255, 120, 120, 0.18);
+  transform: translateY(-1px);
 }
 
 .save-status {
@@ -1427,6 +1462,7 @@ code {
 }
 
 .search-item {
+  position: relative;
   background: rgba(15, 23, 35, 0.6);
   border: 1px solid rgba(125, 144, 170, 0.16);
   border-radius: 14px;
@@ -1436,6 +1472,33 @@ code {
 
 .search-item:hover {
   border-color: rgba(97, 218, 251, 0.35);
+}
+
+/* Stop button overlaid on a search result row while its download is in
+   flight. Absolutely positioned so we don't have to disturb the existing
+   grid layout of .search-row, and high z-index so the row's main button
+   doesn't steal the tap. */
+.search-cancel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 120, 120, 0.45);
+  background: rgba(15, 23, 35, 0.85);
+  color: var(--danger);
+  font-size: 0.85rem;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.search-cancel:hover,
+.search-cancel:active {
+  background: rgba(255, 120, 120, 0.2);
 }
 
 .search-row {

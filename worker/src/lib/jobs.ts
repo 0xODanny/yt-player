@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { execFile, spawn } from "child_process";
+import { execFile, spawn, type ChildProcess } from "child_process";
 import { open, readdir, unlink } from "fs/promises";
 import path from "path";
 import { promisify } from "util";
@@ -76,6 +76,22 @@ type StoredJob = {
   message: string;
   metadata: JobMetadata;
   filename?: string;
+  /**
+   * Live yt-dlp child process for the job, if any. We kill it on user
+   * cancellation. Cleared once the process exits.
+   */
+  child?: ChildProcess;
+  /**
+   * AbortController for the in-flight direct-media fetch, if this job
+   * is using the non-yt-dlp path. Aborted on user cancellation.
+   */
+  directAbort?: AbortController;
+  /**
+   * True once the user cancelled the job. Set before we kill the
+   * process so the close handler can suppress the usual "complete" /
+   * "failed" status updates.
+   */
+  cancelled?: boolean;
 };
 
 const jobStore = new Map<string, StoredJob>();
@@ -150,6 +166,122 @@ export async function createFakeWorkerJob(payload: JobPayload): Promise<JobCreat
     progress: 0,
     message: "Worker job accepted",
   };
+}
+
+/**
+ * Cancel a queued or in-flight job. Behaviour:
+ *
+ *   - For an unknown / already-terminal job (complete / failed /
+ *     cancelled), return ok=false so the caller can surface a 404 /
+ *     409 if it wants to.
+ *   - Otherwise, mark the job cancelled before any process teardown
+ *     so the runYtDlpDownload close handler / downloadDirectMediaJob
+ *     catch block can see the flag and skip overwriting the status
+ *     with "failed".
+ *   - Kill the spawned yt-dlp child with SIGTERM, fall back to
+ *     SIGKILL after a short grace window if it ignored SIGTERM.
+ *     yt-dlp normally exits on SIGTERM and removes its own partial
+ *     files when --no-part is set; we still scan and unlink anything
+ *     left over with the job's prefix as a belt-and-suspenders step.
+ *   - Abort any in-flight fetch() for the direct-media path.
+ */
+export async function cancelFakeWorkerJob(
+  jobId: string,
+): Promise<{ ok: boolean; status: JobStatus; message: string }> {
+  const job = jobStore.get(jobId);
+
+  if (!job) {
+    return {
+      ok: false,
+      status: "failed",
+      message: "Worker job is unknown or has expired.",
+    };
+  }
+
+  if (
+    job.status === "complete" ||
+    job.status === "failed" ||
+    job.status === "cancelled"
+  ) {
+    return {
+      ok: false,
+      status: job.status,
+      message: `Job is already ${job.status}.`,
+    };
+  }
+
+  // Mark cancelled FIRST so the spawn/fetch error paths can detect it
+  // and skip their default "failed" status updates.
+  updateJob(jobId, {
+    cancelled: true,
+    status: "cancelled",
+    progress: 0,
+    message: "Cancelled by user.",
+  });
+
+  if (job.child && !job.child.killed) {
+    try {
+      job.child.kill("SIGTERM");
+    } catch {
+      // already dead
+    }
+    // Belt-and-suspenders: escalate to SIGKILL if it didn't exit.
+    const childRef = job.child;
+    setTimeout(() => {
+      if (!childRef.killed && childRef.exitCode === null) {
+        try {
+          childRef.kill("SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+    }, 2000).unref();
+  }
+
+  if (job.directAbort) {
+    try {
+      job.directAbort.abort();
+    } catch {
+      // already aborted
+    }
+  }
+
+  // Best-effort: remove any partial output file. yt-dlp's --no-part
+  // means partial fragments live at the final filename, so an
+  // interrupted job leaves a real (broken) .mp4/.mp3 on disk that
+  // would otherwise count toward the storage quota.
+  await removePartialFiles(jobId, job.filename).catch(() => undefined);
+
+  return {
+    ok: true,
+    status: "cancelled",
+    message: "Cancelled by user.",
+  };
+}
+
+/**
+ * Wipe any file in DOWNLOADS_DIR whose name corresponds to this job.
+ * The yt-dlp path doesn't know its final filename until close, so we
+ * scan by the sanitized job id prefix; the direct-media path knows
+ * its filename up front and passes it in.
+ */
+async function removePartialFiles(jobId: string, knownFilename?: string) {
+  const safeJobId = jobId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  if (knownFilename) {
+    await unlink(path.join(DOWNLOADS_DIR, knownFilename)).catch(() => undefined);
+  }
+  try {
+    const entries = await readdir(DOWNLOADS_DIR);
+    await Promise.all(
+      entries
+        .filter((entry) => entry.startsWith(`${safeJobId}.`))
+        .map((entry) =>
+          unlink(path.join(DOWNLOADS_DIR, entry)).catch(() => undefined),
+        ),
+    );
+  } catch {
+    // ignore (dir missing, perms, etc.)
+  }
 }
 
 export async function getFakeWorkerJobStatus(
@@ -624,6 +756,8 @@ function buildDirectMediaMetadata(url: string): JobMetadata {
 async function downloadDirectMediaJob(jobId: string, normalizedUrl: string, filename: string) {
   const filePath = path.join(DOWNLOADS_DIR, filename);
   let fileHandle: Awaited<ReturnType<typeof open>> | null = null;
+  const abortController = new AbortController();
+  updateJob(jobId, { directAbort: abortController });
 
   try {
     updateJob(jobId, {
@@ -632,7 +766,9 @@ async function downloadDirectMediaJob(jobId: string, normalizedUrl: string, file
       message: "Worker job processing.",
     });
 
-    const response = await fetch(normalizedUrl);
+    const response = await fetch(normalizedUrl, {
+      signal: abortController.signal,
+    });
 
     if (!response.ok || !response.body) {
       throw new Error("Direct media request failed.");
@@ -677,6 +813,7 @@ async function downloadDirectMediaJob(jobId: string, normalizedUrl: string, file
       status: "complete",
       progress: 100,
       message: "Worker job complete.",
+      directAbort: undefined,
     });
   } catch {
     if (fileHandle) {
@@ -684,10 +821,20 @@ async function downloadDirectMediaJob(jobId: string, normalizedUrl: string, file
     }
 
     await unlink(filePath).catch(() => undefined);
+
+    // If the user cancelled, leave the cancelled status in place and
+    // skip the "failed" overwrite — cancelFakeWorkerJob already set it.
+    const current = jobStore.get(jobId);
+    if (current?.cancelled) {
+      updateJob(jobId, { directAbort: undefined });
+      return;
+    }
+
     updateJob(jobId, {
       status: "failed",
       progress: 0,
       message: "Unable to download direct media file.",
+      directAbort: undefined,
     });
   }
 }
@@ -876,6 +1023,7 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
     stdio: ["ignore", "pipe", "pipe"],
     env: buildYtDlpEnv(useProxy),
   });
+  updateJob(jobId, { child });
 
   console.log(
     `[job ${jobId}] starting download via ${useProxy ? "residential proxy" : "direct droplet IP"} (${normalizedUrl})`,
@@ -950,6 +1098,19 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
     if (stdoutCarry) {
       handleLine(stdoutCarry);
       stdoutCarry = "";
+    }
+
+    // Clear the child handle either way — it's a dead process now.
+    updateJob(jobId, { child: undefined });
+
+    // If the user cancelled, cancelFakeWorkerJob already set the
+    // status to "cancelled" and is responsible for cleaning up any
+    // partial output files. Suppress the usual exit-code branches so
+    // we don't clobber that with a "failed".
+    const currentAfterClose = jobStore.get(jobId);
+    if (currentAfterClose?.cancelled) {
+      console.log(`[job ${jobId}] terminated by cancellation`);
+      return;
     }
 
     if (code !== 0) {

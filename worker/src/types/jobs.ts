@@ -10,7 +10,12 @@ export type JobQuality =
   | "144p"
   | "audio-only";
 
-export type JobStatus = "queued" | "processing" | "complete" | "failed";
+export type JobStatus =
+  | "queued"
+  | "processing"
+  | "complete"
+  | "failed"
+  | "cancelled";
 
 export type JobPayload = {
   url: string;
