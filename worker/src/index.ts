@@ -61,6 +61,24 @@ app.use(express.json());
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
+// Minimal request logger so pm2 logs shows every hit. Helps when the
+// phone reports an error but the route handler swallowed the actual
+// reason. Mounted AFTER cors() so CORS preflight rejections still
+// happen earlier and OPTIONS noise is mostly filtered out at this
+// layer (cors() short-circuits OPTIONS without invoking next()).
+app.use((req, res, next) => {
+  const origin = req.get("origin") ?? "(none)";
+  console.log(`[req] ${req.method} ${req.path} origin=${origin}`);
+  res.on("finish", () => {
+    if (res.statusCode >= 400) {
+      console.log(
+        `[res] ${req.method} ${req.path} → ${res.statusCode}`,
+      );
+    }
+  });
+  next();
+});
+
 app.use("/health", healthRouter);
 app.use("/files", filesRouter);
 app.use("/jobs", jobsRouter);

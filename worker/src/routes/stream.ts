@@ -58,7 +58,13 @@ streamRouter.post("/", async (request, response) => {
     // can never leak proxy credentials to the PWA.
     const raw =
       error instanceof Error ? error.message : "Stream lookup failed.";
-    response.status(502).json({ error: sanitizeErrorMessage(raw) });
+    const sanitized = sanitizeErrorMessage(raw);
+    // Log the (sanitized) failure server-side so pm2 logs surfaces
+    // the real reason — yt-dlp errors otherwise vanish into the
+    // 502 response body. Includes the URL being resolved so we can
+    // map errors back to specific videos when triaging.
+    console.error(`[stream] failed for ${body.url} (type=${type}): ${sanitized}`);
+    response.status(502).json({ error: sanitized });
   }
 });
 
