@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { isAndroidNative } from "@/lib/platform";
 import {
   SETTING_DEFINITIONS,
+  filterSettingDefinitionsForPlatform,
   type SettingDefinition,
   type Settings,
   useSettings,
@@ -31,16 +33,29 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // Resolve the platform once on mount so SSR renders the most
+  // restrictive option set (no Android-only entries) and the client
+  // adds them in after hydration. Avoids the markup mismatch React
+  // warns about when isAndroidNative() flips between server and
+  // client without an effect boundary.
+  const [androidNative, setAndroidNative] = useState(false);
+  useEffect(() => {
+    setAndroidNative(isAndroidNative());
+  }, []);
+
   // Group definitions by section so adding a new section is a one-line change.
   const grouped = useMemo(() => {
+    const filtered = filterSettingDefinitionsForPlatform(SETTING_DEFINITIONS, {
+      androidNative,
+    });
     const map = new Map<string, SettingDefinition[]>();
-    for (const def of SETTING_DEFINITIONS) {
+    for (const def of filtered) {
       const list = map.get(def.section) ?? [];
       list.push(def);
       map.set(def.section, list);
     }
     return Array.from(map.entries());
-  }, []);
+  }, [androidNative]);
 
   if (!open) {
     return null;

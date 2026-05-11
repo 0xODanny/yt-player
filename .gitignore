@@ -12,3 +12,15 @@ worker/.env.*
 .DS_Store
 *.tsbuildinfo
 .vercel
+
+# Capacitor / Android build outputs
+out/
+android/.gradle/
+android/.idea/
+android/local.properties
+android/build/
+android/app/build/
+android/app/release/
+android/app/debug/
+android/captures/
+android/app/src/main/assets/public/

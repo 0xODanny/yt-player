@@ -22,6 +22,8 @@ import {
   renameItem,
   type StorageEstimate,
 } from "@/lib/library";
+import { shareBlobNative } from "@/lib/nativeShare";
+import { isAndroidNative } from "@/lib/platform";
 import { useSettings } from "@/lib/settings";
 
 import { MediaPlayer } from "./MediaPlayer";
@@ -196,11 +198,34 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
       window.alert("This item is missing from the library and can't be exported.");
       return;
     }
-    const url = URL.createObjectURL(blob);
     const safeName = item.title.replace(/[^\w.\- ]+/g, "_") || item.id;
+    const filename = `${safeName}.${item.format}`;
+
+    // Android Capacitor wrapper: skip the browser <a download> trick
+    // (Android WebView's download manager is flaky for blob: URLs) and
+    // stage the bytes to native Documents/ then pop the system Share
+    // sheet. User picks "Save to Files" / "Downloads" / "Photos" /
+    // whatever they want.
+    if (isAndroidNative()) {
+      try {
+        await shareBlobNative(blob, {
+          filename,
+          mime: item.format === "mp3" ? "audio/mp4" : "video/mp4",
+          dialogTitle: "Save to device",
+        });
+      } catch (error) {
+        console.error("[library] native share failed", error);
+        window.alert(
+          "Couldn't open the system share sheet. The file is still in your library.",
+        );
+      }
+      return;
+    }
+
+    const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${safeName}.${item.format}`;
+    anchor.download = filename;
     document.body.appendChild(anchor);
     anchor.click();
     document.body.removeChild(anchor);

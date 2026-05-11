@@ -10,6 +10,8 @@ import {
   type JobStatusResponse,
 } from "@/lib/apiClient";
 import { addItem, type ManifestItem } from "@/lib/library";
+import { downloadToBlob } from "@/lib/nativeDownload";
+import { isAndroidNative } from "@/lib/platform";
 import {
   formatLength,
   formatViewCount,
@@ -18,7 +20,11 @@ import {
   youtubeWatchUrl,
   type SearchResult,
 } from "@/lib/search";
-import { type SearchPreset, useSettings } from "@/lib/settings";
+import {
+  isAndroidNativeOnlyPreset,
+  type SearchPreset,
+  useSettings,
+} from "@/lib/settings";
 import { fetchStreamSource, type StreamSource } from "@/lib/stream";
 
 import { MediaPlayer } from "./MediaPlayer";
@@ -122,6 +128,26 @@ function isStreamPreset(preset: SearchPreset): boolean {
   return preset === "stream-audio" || preset === "stream-video";
 }
 
+/**
+ * Friendly file-extension hint for a direct-download preset. The bytes
+ * returned by yt-dlp are almost always itag 18 (MP4 with audio+video)
+ * even when we asked for audio — see lib/stream.ts for the PO Token
+ * fallback discussion. We still distinguish the extensions for the
+ * library's "format" column so the audio-only chip lands in the
+ * Library's MP3 filter and shows audio-only player chrome.
+ */
+function directPresetMimeAndFormat(preset: SearchPreset): {
+  mime: string;
+  format: "mp3" | "mp4";
+} {
+  if (preset === "direct-audio") {
+    // The Blob still contains MP4 bytes; "mp3" here is the library's
+    // logical category (audio-only), not a claim about the container.
+    return { mime: "audio/mp4", format: "mp3" };
+  }
+  return { mime: "video/mp4", format: "mp4" };
+}
+
 function presetToJobPayload(preset: SearchPreset): {
   format: JobPayload["format"];
   quality: JobPayload["quality"];
@@ -140,6 +166,11 @@ function presetToJobPayload(preset: SearchPreset): {
     case "mp3":
     case "stream-audio":
     case "stream-video":
+    // direct-* presets never reach this function (the handler short-
+    // circuits before calling createJob), but exhaustiveness wants a
+    // fallback so TypeScript stops bugging us.
+    case "direct-audio":
+    case "direct-video":
     default:
       return { format: "mp3", quality: "best" };
   }
@@ -161,13 +192,28 @@ function presetLabel(preset: SearchPreset): string {
       return "audio stream";
     case "stream-video":
       return "video stream";
+    case "direct-audio":
+      return "direct audio save";
+    case "direct-video":
+      return "direct video save";
     case "mp3":
     default:
       return "MP3 audio";
   }
 }
 
-const PRESET_OPTIONS: Array<{ value: SearchPreset; label: string }> = [
+type PresetOption = {
+  value: SearchPreset;
+  label: string;
+  /**
+   * When true, hide the chip unless the runtime is the Android
+   * Capacitor wrapper. See lib/nativeDownload.ts for why direct-*
+   * presets are platform-gated.
+   */
+  androidNativeOnly?: boolean;
+};
+
+const PRESET_OPTIONS: PresetOption[] = [
   { value: "stream-audio", label: "▶ Audio" },
   { value: "stream-video", label: "▶ Video" },
   { value: "mp3", label: "↓ MP3" },
@@ -176,6 +222,8 @@ const PRESET_OPTIONS: Array<{ value: SearchPreset; label: string }> = [
   { value: "video-360p", label: "↓ 360p" },
   { value: "video-720p", label: "↓ 720p" },
   { value: "video-1080p", label: "↓ 1080p" },
+  { value: "direct-audio", label: "⇣ Audio (phone data)", androidNativeOnly: true },
+  { value: "direct-video", label: "⇣ Video (phone data)", androidNativeOnly: true },
 ];
 
 export function SearchView({ onLibraryChanged }: SearchViewProps) {
@@ -188,7 +236,32 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   const [autoPlayItem, setAutoPlayItem] = useState<ManifestItem | null>(null);
   const [autoPlayStream, setAutoPlayStream] = useState<StreamSource | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  // Resolve once on mount so the chip strip matches between SSR and
+  // hydration. SSR always sees `false` (no Capacitor), so the
+  // direct-* chips are absent in the initial markup and only appear
+  // after the effect runs; that's fine because the user can't
+  // interact before hydration anyway.
+  const [androidNative, setAndroidNative] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Used by handleCancelDownload to abort an in-flight native
+  // download (Capacitor doesn't expose true cancellation but we can
+  // at least stop reporting progress and discard the staged file).
+  const nativeAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    setAndroidNative(isAndroidNative());
+  }, []);
+
+  // Filter the chip strip down to what the current platform can
+  // actually do. Memoised on androidNative so the array reference is
+  // stable across re-renders (cheap, but keeps React happy).
+  const visiblePresets = useMemo(
+    () =>
+      PRESET_OPTIONS.filter(
+        (option) => !option.androidNativeOnly || androidNative,
+      ),
+    [androidNative],
+  );
 
   const preset = settings.searchPreset;
 
@@ -231,13 +304,23 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   }, []);
 
   /**
-   * Cancel the in-flight worker download for the current result.
-   * DELETE /jobs/:id makes the worker kill its yt-dlp child process,
-   * unlink any partial output, and flip the job to "cancelled"; we
-   * also flip our local state so the polling effect exits and the
-   * single-active-download lock releases.
+   * Cancel the in-flight download for the current result, whichever
+   * path it's running through:
+   *   - Worker job: DELETE /jobs/:id kills the yt-dlp child, unlinks
+   *     any partial output, and flips the job to "cancelled".
+   *   - Android-native direct download: fire the AbortController so
+   *     downloadToBlob stops reporting progress and discards the
+   *     staged temp file. (Capacitor 6 can't actually cut the
+   *     underlying HTTP request — see the comment in
+   *     lib/nativeDownload.ts — but the user-facing behaviour is the
+   *     same: nothing lands in the library.)
+   * Local state flips to "cancelled" so the polling effect exits and
+   * the single-active-download lock releases.
    */
   const handleCancelDownload = useCallback(async () => {
+    nativeAbortRef.current?.abort();
+    nativeAbortRef.current = null;
+
     const jobId = download?.jobId;
     if (jobId) {
       try {
@@ -436,6 +519,147 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
 
       const url = youtubeWatchUrl(result.videoId);
 
+      // Direct-download path (Android Capacitor app only). Same
+      // metadata round-trip as streaming (worker → IPRoyal → yt-dlp
+      // returns a googlevideo.com URL), but instead of opening
+      // MediaPlayer we hand the URL to native HTTP code which fetches
+      // the file from the device's residential IP and stages it for
+      // OPFS save. Bandwidth flow: ~50 KB through IPRoyal for
+      // metadata, then ~50 MB phone↔googlevideo direct, free.
+      //
+      // Fallback: if we're somehow on a non-Android platform with a
+      // direct-* preset selected (e.g. user manually edited
+      // localStorage), degrade gracefully to a stream of the same
+      // type so the tap isn't a no-op.
+      if (isAndroidNativeOnlyPreset(preset)) {
+        if (!androidNative) {
+          const streamType = preset === "direct-audio" ? "audio" : "video";
+          setDownload({
+            videoId: result.videoId,
+            status: "streaming",
+            progress: 0,
+            message: "Direct download requires the Android app. Streaming instead.",
+          });
+          try {
+            const source = await fetchStreamSource(url, streamType);
+            setAutoPlayStream({
+              ...source,
+              title: source.title || result.title,
+              author: source.author || result.author,
+              thumbnail:
+                source.thumbnail ||
+                pickThumbnail(result.thumbnails, 480)?.url,
+            });
+            setDownload({
+              videoId: result.videoId,
+              status: "complete",
+              progress: 100,
+            });
+          } catch (error) {
+            setDownload({
+              videoId: result.videoId,
+              status: "failed",
+              progress: 0,
+              message:
+                error instanceof Error ? error.message : "Stream lookup failed.",
+            });
+          }
+          return;
+        }
+
+        const streamType = preset === "direct-audio" ? "audio" : "video";
+        const controller = new AbortController();
+        nativeAbortRef.current = controller;
+        setDownload({
+          videoId: result.videoId,
+          status: "queued",
+          progress: 0,
+          message: "Resolving direct URL…",
+        });
+
+        try {
+          const source = await fetchStreamSource(url, streamType, {
+            signal: controller.signal,
+          });
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          const { mime, format } = directPresetMimeAndFormat(preset);
+          setDownload({
+            videoId: result.videoId,
+            status: "processing",
+            progress: 0,
+            message: "Downloading via phone data…",
+          });
+
+          const blob = await downloadToBlob(source.url, {
+            filename: `${result.videoId}.${format === "mp3" ? "m4a" : "mp4"}`,
+            mimeHint: mime,
+            signal: controller.signal,
+            onProgress: ({ loaded, total }) => {
+              const pct = total
+                ? Math.max(2, Math.min(99, Math.round((loaded / total) * 100)))
+                : Math.min(99, Math.round(loaded / (1024 * 1024)));
+              setDownload((current) =>
+                current && current.videoId === result.videoId
+                  ? { ...current, status: "processing", progress: pct }
+                  : current,
+              );
+            },
+          });
+
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          setDownload((current) =>
+            current && current.videoId === result.videoId
+              ? { ...current, status: "saving", progress: 99 }
+              : current,
+          );
+
+          const item = await addItem({
+            blob,
+            title: source.title || result.title || "Untitled",
+            sourceUrl: url,
+            format,
+            quality: preset === "direct-audio" ? "audio (direct)" : "360p (direct)",
+            duration: source.duration ?? result.lengthSeconds ?? null,
+            thumbnail:
+              source.thumbnail ||
+              pickThumbnail(result.thumbnails, 480)?.url,
+            author: source.author || result.author,
+          });
+
+          setDownload({
+            videoId: result.videoId,
+            status: "complete",
+            progress: 100,
+          });
+          setAutoPlayItem(item);
+          onLibraryChanged();
+        } catch (error) {
+          if ((error as Error).name === "AbortError") {
+            return;
+          }
+          setDownload({
+            videoId: result.videoId,
+            status: "failed",
+            progress: 0,
+            message:
+              error instanceof Error
+                ? `Direct download failed: ${error.message}`
+                : "Direct download failed.",
+          });
+        } finally {
+          if (nativeAbortRef.current === controller) {
+            nativeAbortRef.current = null;
+          }
+        }
+        return;
+      }
+
       // Stream path: ask the worker to resolve a googlevideo.com URL we can
       // play directly, then open MediaPlayer with that URL. No download,
       // no library save, no IPRoyal bandwidth (just the tiny metadata
@@ -511,7 +735,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
         });
       }
     },
-    [download, preset, onLibraryChanged],
+    [download, preset, androidNative, onLibraryChanged],
   );
 
   const friendlyMessage = useMemo(() => {
@@ -572,7 +796,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
           </div>
 
           <div className="search-presets" role="radiogroup" aria-label="Download quality">
-            {PRESET_OPTIONS.map((option) => (
+            {visiblePresets.map((option) => (
               <button
                 key={option.value}
                 type="button"
@@ -591,7 +815,11 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
               {searching ? "Searching…" : "Search"}
             </button>
             <p className="helper-text">
-              Tap a result to download as {presetLabel(preset)} and play.
+              {isStreamPreset(preset)
+                ? `Tap a result to ${presetLabel(preset)} (ad-free, uses your phone data).`
+                : isAndroidNativeOnlyPreset(preset)
+                  ? `Tap a result to ${presetLabel(preset)} via your phone's data (free, no proxy bytes).`
+                  : `Tap a result to download as ${presetLabel(preset)} via the worker (uses paid proxy data).`}
             </p>
           </div>
         </form>

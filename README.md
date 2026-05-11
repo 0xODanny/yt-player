@@ -95,10 +95,64 @@ npm run start:prod        # PM2
 
 `worker.pepinho.lol` should terminate TLS at nginx and proxy to the PM2-managed Node process on `127.0.0.1:3001`. The worker reads `X-Forwarded-Proto` so the `downloadUrl` it returns to the frontend is correctly `https://worker.pepinho.lol/files/...`.
 
+## Android App (Capacitor)
+
+The PWA can be packaged as a native Android app to unlock **direct
+downloads** that bypass the IPRoyal residential proxy entirely:
+
+- Worker resolves the googlevideo.com URL via `yt-dlp` (small metadata
+  hit through IPRoyal, ~50 KB).
+- Native Capacitor HTTP code on the phone fetches the actual bytes
+  over cellular / WiFi using the device's residential IP — neither
+  browser CORS rules nor Google's ASN block on the worker's
+  datacenter IP apply, so it just works.
+- Saved into the in-app OPFS library or shared out via the system
+  Share sheet to Files / Photos / Downloads.
+
+These chips (`⇣ Audio (phone data)`, `⇣ Video (phone data)`) only
+render inside the native Android wrapper — see `lib/platform.ts`.
+
+### One-time setup
+
+1. Install Android Studio (Hedgehog / 2023.1.1+ recommended).
+2. From `yt-local-tool/`:
+   ```bash
+   npm install                                # pulls Capacitor deps
+   npx cap add android                        # generates android/ once
+   ```
+3. Open `android/local.properties` and set:
+   ```
+   sdk.dir=/Users/<you>/Library/Android/sdk
+   ```
+
+### Build the APK
+
+```bash
+npm run build:capacitor          # static export + cap sync android
+npm run cap:open:android         # launches Android Studio
+# In Android Studio: Build → Build Bundle(s) / APK(s) → Build APK(s)
+# The APK lands at android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+For a release-signed APK suitable for sideload that survives
+reinstall:
+
+```bash
+cd android
+./gradlew assembleRelease
+# Outputs android/app/build/outputs/apk/release/app-release-unsigned.apk
+# Sign with apksigner using your own keystore.
+```
+
+The app ID is `lol.pepinho.ytplayer` (configured in
+`capacitor.config.ts`).
+
 ## Status
 
 - Frontend PWA with installable manifest and offline shell — ✓
 - Worker performs real `yt-dlp` downloads with progress reporting — ✓
 - MP3 + MP4 with quality selection down to 360p — ✓
+- Ad-free streaming via direct googlevideo URLs — ✓
+- Android-native direct downloads (Capacitor app only) — ✓
 - Recent jobs list, progress bar, online indicator, URL classification hints — ✓
 - Use only on content you own or that is in the public domain.

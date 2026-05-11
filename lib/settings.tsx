@@ -29,7 +29,14 @@ export type SearchPreset =
   | "video-720p"
   | "video-1080p"
   | "stream-audio"
-  | "stream-video";
+  | "stream-video"
+  // direct-* presets only function inside the native Android Capacitor
+  // wrapper. On any other platform the SETTING_DEFINITIONS filter
+  // hides them from the dropdown and the SearchView tap handler falls
+  // back to the streaming path with a toast. See lib/platform.ts +
+  // lib/nativeDownload.ts for the why.
+  | "direct-audio"
+  | "direct-video";
 
 export type Settings = {
   pipAuto: boolean;
@@ -56,22 +63,39 @@ const KNOWN_PRESETS: SearchPreset[] = [
   "video-1080p",
   "stream-audio",
   "stream-video",
+  "direct-audio",
+  "direct-video",
 ];
 
 /**
- * Map retired SearchPreset values back into a current one so users
- * with a stale localStorage entry don't get stuck on an unrecognized
- * preset that no chip / option matches.
+ * Presets that only work inside the Android Capacitor app. The
+ * settings UI hides them on every other platform (see
+ * SETTING_DEFINITIONS construction below) and the SearchView render
+ * path swaps them out for a stream fallback if a user somehow lands
+ * on one (e.g. after migrating between devices).
+ */
+export const ANDROID_NATIVE_ONLY_PRESETS: SearchPreset[] = [
+  "direct-audio",
+  "direct-video",
+];
+
+export function isAndroidNativeOnlyPreset(preset: SearchPreset): boolean {
+  return ANDROID_NATIVE_ONLY_PRESETS.includes(preset);
+}
+
+/**
+ * Coerce a stored SearchPreset value into one we currently recognize.
  *
- * History: `direct-audio` / `direct-video` were a short-lived
- * "save without using IPRoyal bandwidth" experiment that died on
- * YouTube's PO Token enforcement in 2026. yt-dlp via the
- * ios/tv/mweb/android player_clients returns only the legacy itag
- * 18 progressive URL for ~all videos now. Browser fetch() can't
- * pull itag 18 (no CORS), and the worker can't proxy it either
- * (googlevideo blocks DigitalOcean's ASN). The streaming path is
- * unaffected because <video src=...> uses opaque media load, which
- * doesn't go through CORS.
+ * History: `direct-audio` / `direct-video` were retired in commit
+ * 77339ed because the cross-platform PWA implementation broke on
+ * YouTube's PO Token enforcement (no HLS available from yt-dlp,
+ * googlevideo blocks the worker's ASN, browser fetch hits CORS on
+ * itag 18). They're back in this commit but ONLY meaningful inside
+ * the Android Capacitor wrapper — there, CapacitorHttp routes the
+ * download through native code so neither CORS nor the ASN block
+ * apply (the request leaves the phone over its cellular/WiFi IP).
+ * The migration here is a no-op for known presets; the helper exists
+ * so any future renames have a single chokepoint.
  */
 function normalizeSearchPreset(value: unknown): SearchPreset {
   if (
@@ -80,8 +104,6 @@ function normalizeSearchPreset(value: unknown): SearchPreset {
   ) {
     return value as SearchPreset;
   }
-  if (value === "direct-audio") return "mp3";
-  if (value === "direct-video") return "video-360p";
   return DEFAULT_SETTINGS.searchPreset;
 }
 
@@ -99,7 +121,16 @@ export type SettingDefinitionSelect = {
   label: string;
   description: string;
   section: "Playback" | "Library" | "Search";
-  options: Array<{ value: string; label: string }>;
+  options: Array<{
+    value: string;
+    label: string;
+    /**
+     * When true, the option is only rendered if the runtime is the
+     * native Android Capacitor wrapper. Settings UI consumers should
+     * call filterSettingDefinitionsForPlatform() before rendering.
+     */
+    androidNativeOnly?: boolean;
+  }>;
 };
 
 export type SettingDefinition = SettingDefinitionToggle | SettingDefinitionSelect;
@@ -129,12 +160,22 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     options: [
       { value: "stream-audio", label: "Stream audio (no save, ad-free)" },
       { value: "stream-video", label: "Stream video (no save, ad-free)" },
-      { value: "mp3", label: "Download MP3 via worker (~5 MB)" },
-      { value: "video-144p", label: "Download 144p via worker (~12 MB)" },
-      { value: "video-240p", label: "Download 240p via worker (~25 MB)" },
-      { value: "video-360p", label: "Download 360p via worker (~50 MB)" },
-      { value: "video-720p", label: "Download 720p via worker (~80 MB)" },
-      { value: "video-1080p", label: "Download 1080p via worker (~150 MB)" },
+      { value: "mp3", label: "Download MP3 via worker (uses proxy data, ~5 MB)" },
+      { value: "video-144p", label: "Download 144p via worker (uses proxy data, ~12 MB)" },
+      { value: "video-240p", label: "Download 240p via worker (uses proxy data, ~25 MB)" },
+      { value: "video-360p", label: "Download 360p via worker (uses proxy data, ~50 MB)" },
+      { value: "video-720p", label: "Download 720p via worker (uses proxy data, ~80 MB)" },
+      { value: "video-1080p", label: "Download 1080p via worker (uses proxy data, ~150 MB)" },
+      {
+        value: "direct-audio",
+        label: "Direct audio save (Android app only, your phone data)",
+        androidNativeOnly: true,
+      },
+      {
+        value: "direct-video",
+        label: "Direct 360p save (Android app only, your phone data)",
+        androidNativeOnly: true,
+      },
     ],
   },
   {
@@ -152,6 +193,27 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     section: "Library",
   },
 ];
+
+/**
+ * Strip options that are flagged androidNativeOnly when the runtime
+ * isn't the Android Capacitor wrapper. Callers should pass the
+ * result of `isAndroidNative()` from lib/platform.ts; we don't import
+ * it directly here to keep this module free of side-effects (and so
+ * SSR can call it with a constant `false`).
+ */
+export function filterSettingDefinitionsForPlatform(
+  definitions: SettingDefinition[],
+  context: { androidNative: boolean },
+): SettingDefinition[] {
+  return definitions.map((def) => {
+    if (def.type !== "select") return def;
+    if (context.androidNative) return def;
+    return {
+      ...def,
+      options: def.options.filter((opt) => !opt.androidNativeOnly),
+    };
+  });
+}
 
 const SETTINGS_STORAGE_KEY = "yt-local-tool:settings";
 
