@@ -1,0 +1,162 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Lets you trigger from the Actions tab on demand (handy after a
+  # secret rotation when you want a fresh signed APK without pushing
+  # an empty commit).
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & sign release APK
+    runs-on: ubuntu-latest
+
+    # Permit GITHUB_TOKEN to publish the artifact + (optionally)
+    # release. Read-only on contents is enough; we don't push code
+    # back.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      # Capacitor 6 / Android Gradle Plugin 8.x require JDK 17.
+      # 'temurin' is the Adoptium build of OpenJDK (stable LTS).
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      # actions/setup-android only ships the SDK manager; the
+      # build-tools / platforms / extras still need to be installed.
+      # The official 'android-actions/setup-android' handles all of
+      # that and caches the SDK.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # gradlew arrives as a plain file from the git checkout on
+      # Linux — make sure the executable bit is set before we try to
+      # invoke it.
+      - name: Mark gradlew executable
+        run: chmod +x android/gradlew
+
+      # Gradle reads the SDK location from android/local.properties
+      # (or the ANDROID_HOME env var). The setup-android action
+      # exports ANDROID_HOME but Capacitor's settings.gradle prefers
+      # the properties file, so write it explicitly to avoid the
+      # "SDK location not found" failure mode.
+      - name: Write android/local.properties
+        run: |
+          {
+            echo "sdk.dir=$ANDROID_HOME"
+          } > android/local.properties
+
+      # The Capacitor build needs production worker creds baked into
+      # the JS bundle (NEXT_PUBLIC_* are read by Next.js at build
+      # time). We write a `.env.production.local` so `next build`
+      # picks them up the same way it would on the developer's Mac.
+      # Both secrets are repo-scoped — set them under Settings >
+      # Secrets and variables > Actions before the first run.
+      #
+      # Fail fast if the worker URL secret is missing: an APK built
+      # without it would silently 'fail to fetch' on every search.
+      # The API key is allowed to be empty (the worker uses it for
+      # rate limiting, not auth).
+      - name: Write production .env
+        env:
+          NEXT_PUBLIC_WORKER_API_URL: ${{ secrets.NEXT_PUBLIC_WORKER_API_URL }}
+          NEXT_PUBLIC_WORKER_API_KEY: ${{ secrets.NEXT_PUBLIC_WORKER_API_KEY }}
+        run: |
+          if [ -z "$NEXT_PUBLIC_WORKER_API_URL" ]; then
+            echo "::error::Missing repository secret NEXT_PUBLIC_WORKER_API_URL. Set it under Settings > Secrets and variables > Actions before this workflow can build a usable APK."
+            exit 1
+          fi
+          cat > .env.production.local <<EOF
+          NEXT_PUBLIC_WORKER_API_URL=$NEXT_PUBLIC_WORKER_API_URL
+          NEXT_PUBLIC_WORKER_API_KEY=$NEXT_PUBLIC_WORKER_API_KEY
+          EOF
+
+      # Reconstruct the release keystore from a base64-encoded secret.
+      # The local workflow:
+      #   base64 -i android/yt-player-release.keystore | pbcopy
+      # then paste into the KEYSTORE_BASE64 secret. If the secret is
+      # empty the keystore step no-ops and gradle still builds an
+      # *unsigned* APK (still installable via adb for testing).
+      - name: Decode keystore (if configured)
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > android/yt-player-release.keystore
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            cat > android/signing.properties <<EOF
+          storeFile=yt-player-release.keystore
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          EOF
+            echo "::notice::Release keystore configured — APK will be signed."
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No KEYSTORE_BASE64 secret set; building unsigned APK. Add the secret to ship installable builds."
+          fi
+
+      - name: Build Android APK
+        run: npm run build:android:release
+
+      # The signed APK lands at app-release.apk; an unsigned build
+      # writes app-release-unsigned.apk instead. Upload whichever
+      # exists.
+      - name: Locate APK
+        id: apk
+        run: |
+          if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
+            echo "path=android/app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_OUTPUT"
+            echo "name=yt-player-${{ github.sha }}.apk" >> "$GITHUB_OUTPUT"
+          elif [ -f android/app/build/outputs/apk/release/app-release-unsigned.apk ]; then
+            echo "path=android/app/build/outputs/apk/release/app-release-unsigned.apk" >> "$GITHUB_OUTPUT"
+            echo "name=yt-player-${{ github.sha }}-unsigned.apk" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::No APK produced. Check the Build step output."
+            exit 1
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ steps.apk.outputs.path }}
+          # Keep for 30 days; pushed-to-main artifacts are intended
+          # for sideload-on-demand, not long-term archival. Tag a
+          # GitHub release if you want a permanent copy.
+          retention-days: 30
+
+      # On a push to main, also attach the APK to the latest commit
+      # as a checks-tab download for easier discovery. Skipped for
+      # pull requests so forks don't accidentally publish artifacts.
+      - name: Summary
+        if: github.event_name == 'push'
+        run: |
+          {
+            echo "### APK built"
+            echo ""
+            echo "- Path: \`${{ steps.apk.outputs.path }}\`"
+            echo "- Signed: \`${{ steps.keystore.outputs.signed }}\`"
+            echo "- Download via the Artifacts panel above, or the [actions API]"
+          } >> "$GITHUB_STEP_SUMMARY"

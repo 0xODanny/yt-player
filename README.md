@@ -211,6 +211,39 @@ hard-coded in the `assets:generate` script in `package.json` — edit
 the `--iconBackgroundColor` / `--splashBackgroundColor` flags to
 change it.
 
+## Building APKs from GitHub Actions
+
+`.github/workflows/android-apk.yml` builds a signed release APK on
+every push to `main` (and on pull requests, but without keystore
+access from forks). The artifact lives under the run's **Artifacts**
+panel for 30 days; download it and `adb install -r` to update your
+phone without ever opening Android Studio.
+
+### One-time setup
+
+Under **Settings → Secrets and variables → Actions** on the repo,
+add these four secrets:
+
+| Secret | Value |
+|--------|-------|
+| `NEXT_PUBLIC_WORKER_API_URL` | `https://worker.pepinho.lol` |
+| `NEXT_PUBLIC_WORKER_API_KEY` | The same key your local `.env.production.local` uses (or blank if you don't gate the worker on a key) |
+| `KEYSTORE_BASE64` | The release keystore, base64-encoded. Generate locally with `base64 -i android/yt-player-release.keystore \| pbcopy` then paste in. |
+| `KEYSTORE_PASSWORD` | The store password you set when you ran `keytool` |
+| `KEY_ALIAS` | `yt-player` (or whatever `-alias` you passed to `keytool`) |
+| `KEY_PASSWORD` | The key password (same as the store password if you didn't override) |
+
+`KEYSTORE_BASE64` is optional. If you skip it the workflow still
+runs; it just produces an `app-release-unsigned.apk`, which is
+fine for casual testing but can't reinstall over an existing
+signed install.
+
+### Triggering on demand
+
+Workflow has `workflow_dispatch` enabled, so you can rebuild the
+APK from the Actions tab without pushing a new commit. Handy after
+rotating cookies on the droplet but not touching app code.
+
 ## Refreshing YouTube Cookies
 
 YouTube's session cookies expire every few weeks. When that happens,
