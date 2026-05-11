@@ -1,7 +1,11 @@
 import { Router } from "express";
 
 import { requireWorkerAuth } from "../lib/auth";
-import { getStreamUrl, isValidMediaSourceUrl } from "../lib/jobs";
+import {
+  getStreamUrl,
+  isValidMediaSourceUrl,
+  sanitizeErrorMessage,
+} from "../lib/jobs";
 
 const streamRouter = Router();
 
@@ -65,8 +69,13 @@ streamRouter.post("/", async (request, response) => {
     const result = await getStreamUrl(body.url, type, { forSave });
     response.json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Stream lookup failed.";
-    response.status(502).json({ error: message });
+    // Defence-in-depth: getStreamUrl already sanitizes its own errors,
+    // but if anything bypasses that path (e.g. a normalizeMediaSourceUrl
+    // throw with the raw URL in the message) we scrub one more time at
+    // the boundary so proxy credentials can never reach the PWA.
+    const raw =
+      error instanceof Error ? error.message : "Stream lookup failed.";
+    response.status(502).json({ error: sanitizeErrorMessage(raw) });
   }
 });
 

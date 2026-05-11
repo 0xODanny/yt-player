@@ -641,10 +641,38 @@ export async function getStreamUrl(
     normalizedUrl,
   ];
 
-  const { stdout } = await execFileAsync(YT_DLP_BINARY, args, {
-    env: buildYtDlpEnv(useProxy),
-    maxBuffer: 8 * 1024 * 1024,
-  });
+  let stdout: string;
+  try {
+    const result = await execFileAsync(YT_DLP_BINARY, args, {
+      env: buildYtDlpEnv(useProxy),
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    stdout = result.stdout;
+  } catch (error) {
+    // execFile errors carry the full argv and stderr by default — including
+    // the `--proxy http://user:pass@host` argument with the IPRoyal
+    // credentials. We MUST scrub before re-throwing, otherwise these
+    // bubble all the way to the PWA UI and show up in user screenshots.
+    const stderr = (error as { stderr?: string }).stderr ?? "";
+    const raw =
+      extractYtDlpError(stderr) ??
+      (error instanceof Error ? error.message : "");
+    const cleaned = sanitizeErrorMessage(raw);
+
+    // "Requested format is not available" is the common, expected
+    // failure: this video doesn't expose a muxed HLS variant via
+    // ios/tv/mweb/android. Map it to a friendly hint the PWA can
+    // render verbatim — much better UX than dumping yt-dlp's argv at
+    // the user.
+    if (/requested format is not available/i.test(cleaned)) {
+      const hint = forSave
+        ? "No HLS-muxed variant is available for this video. Use the regular ↓ Video / ↓ MP3 buttons to download via the worker instead."
+        : "No playable single-stream format is available for this video.";
+      throw new Error(hint);
+    }
+
+    throw new Error(cleaned || "yt-dlp failed to resolve a stream URL.");
+  }
 
   const info = JSON.parse(stdout) as YtDlpVideoInfo & {
     url?: string;
@@ -1238,19 +1266,47 @@ function parseYtDlpProgress(line: string): number | null {
   return Number.isFinite(value) ? Math.floor(value) : null;
 }
 
+/**
+ * Strip embedded credentials from anything we're about to expose. Node's
+ * execFile error message includes the entire argv (so `--proxy http://
+ * user:pass@host:port` gets stringified verbatim), and yt-dlp's own
+ * error log sometimes echoes the URL it was using. Both end up in the
+ * `Error.message` we throw from getStreamUrl, which the route handler
+ * returns to the PWA as JSON, which the UI dumps in a status card.
+ *
+ * Pattern matches the `user:pass@` segment of an http(s) URL and
+ * replaces it with `<credentials>@` so we keep the host visible for
+ * debugging but never leak the actual creds. Also redacts the
+ * `--proxy` flag's full argument as a belt-and-suspenders measure
+ * since it's the most common source of leakage.
+ */
+export function sanitizeErrorMessage(message: string): string {
+  if (!message) return message;
+  return message
+    .replace(/(https?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1<credentials>@")
+    .replace(/--proxy\s+\S+/gi, "--proxy <redacted>")
+    .replace(/--cookies\s+\S+/gi, "--cookies <redacted>");
+}
+
 function extractYtDlpError(stderr: string): string | null {
   if (!stderr) {
     return null;
   }
   const lines = stderr.split(/\r?\n/).filter(Boolean);
-  // Prefer the last "ERROR:" line for relevance.
+  // Prefer the last "ERROR:" line for relevance. We sanitize at the end
+  // so any embedded proxy URL / cookie path is stripped before this
+  // string is forwarded to the user (worker /stream error response,
+  // or job.message returned by /jobs/:id status polling).
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i];
     if (/^error[: ]/i.test(line)) {
-      return line.replace(/^error[: ]\s*/i, "").slice(0, 240);
+      return sanitizeErrorMessage(
+        line.replace(/^error[: ]\s*/i, "").slice(0, 240),
+      );
     }
   }
-  return lines[lines.length - 1]?.slice(0, 240) ?? null;
+  const last = lines[lines.length - 1]?.slice(0, 240) ?? null;
+  return last ? sanitizeErrorMessage(last) : null;
 }
 
 async function findDownloadedFilename(safeJobId: string): Promise<string | null> {

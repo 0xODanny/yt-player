@@ -232,6 +232,15 @@ function friendlyJobMessage(
     }
   }
 
+  // Belt-and-suspenders: never render a message containing what looks
+  // like a `user:password@host` URL. The worker scrubs these before
+  // they leave the droplet, but older workers / unscrubbed code paths
+  // could still bubble one up, and we'd rather show a generic line
+  // than expose IPRoyal credentials in a screenshot.
+  if (/https?:\/\/[^/\s:@]+:[^/\s@]+@/i.test(rawMessage)) {
+    return "Worker error (details suppressed). Check pm2 logs on the droplet for the full message.";
+  }
+
   return rawMessage;
 }
 

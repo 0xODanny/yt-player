@@ -673,11 +673,29 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
     if (!download?.message) {
       return null;
     }
+    const lower = download.message.toLowerCase();
     if (
-      download.message.toLowerCase().includes("sign in to confirm") ||
-      download.message.toLowerCase().includes("login_required")
+      lower.includes("sign in to confirm") ||
+      lower.includes("login_required")
     ) {
       return "YouTube blocked this download from the server. Try a different video, or set up a residential proxy / cookies.";
+    }
+    // Worker maps "Requested format is not available" to a friendly
+    // hint already, but old worker versions and the raw yt-dlp text
+    // can both reach the PWA. Catch both shapes and surface a clean
+    // one-line message that points the user at the worker-download
+    // alternative.
+    if (
+      lower.includes("no hls-muxed variant") ||
+      lower.includes("requested format is not available")
+    ) {
+      return "This video doesn't expose a muxed HLS variant. Tap one of the ↓ Video / ↓ MP3 buttons to download via the worker instead.";
+    }
+    // Belt-and-suspenders: never render an error containing what
+    // looks like a `user:password@host` URL, even if a worker layer
+    // somehow missed sanitizing it. Replace with a generic message.
+    if (/https?:\/\/[^/\s:@]+:[^/\s@]+@/i.test(download.message)) {
+      return "Worker error (details suppressed). Check pm2 logs on the droplet for the full message.";
     }
     return download.message;
   }, [download?.message]);
