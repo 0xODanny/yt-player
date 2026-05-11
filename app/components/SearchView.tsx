@@ -9,6 +9,14 @@ import {
   type JobPayload,
   type JobStatusResponse,
 } from "@/lib/apiClient";
+import {
+  clearAllInflight,
+  clearInflight,
+  inflightIdFor,
+  registerInflight,
+  takeOrphansAndPruneStale,
+  type InflightDirectDownload,
+} from "@/lib/inflightDownloads";
 import { addItem, type ManifestItem } from "@/lib/library";
 import { downloadToBlob } from "@/lib/nativeDownload";
 import { isAndroidNative } from "@/lib/platform";
@@ -242,6 +250,14 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   // after the effect runs; that's fine because the user can't
   // interact before hydration anyway.
   const [androidNative, setAndroidNative] = useState(false);
+  // Direct downloads that were running when the app was last killed.
+  // Populated once on mount from localStorage (see
+  // lib/inflightDownloads.ts). Rendered as a "resume?" banner above
+  // the search form; entries clear as the user hits Retry / Dismiss
+  // (or completes a retry successfully).
+  const [orphanedDownloads, setOrphanedDownloads] = useState<
+    InflightDirectDownload[]
+  >([]);
   const abortRef = useRef<AbortController | null>(null);
   // Used by handleCancelDownload to abort an in-flight native
   // download (Capacitor doesn't expose true cancellation but we can
@@ -249,7 +265,15 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   const nativeAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setAndroidNative(isAndroidNative());
+    const native = isAndroidNative();
+    setAndroidNative(native);
+    // Direct downloads only ever exist under the Android wrapper, so
+    // there's no value showing the orphan banner on iOS/web — that
+    // localStorage entry would be from a different origin anyway,
+    // but guarding here lets the assertion stand for future readers.
+    if (native) {
+      setOrphanedDownloads(takeOrphansAndPruneStale());
+    }
   }, []);
 
   // Filter the chip strip down to what the current platform can
@@ -506,6 +530,188 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
     };
   }, [download?.jobId, download?.status, download?.videoId, results, preset, onLibraryChanged]);
 
+  /**
+   * Run the Android-native direct-download flow for a video.
+   * Extracted from handleResultTap so the orphan-recovery banner can
+   * call into the same code path with metadata loaded from
+   * localStorage (where we don't have a full SearchResult object).
+   *
+   * Side effects:
+   *   - Registers an inflight entry on start, clears it on terminal
+   *     state (success / abort / error). On force-kill or OOM the
+   *     entry survives and surfaces as an orphan next mount.
+   *   - Drives the `download` state machine identically to a
+   *     fresh tap.
+   *   - Wires `nativeAbortRef` so handleCancelDownload can stop it.
+   */
+  const executeDirectDownload = useCallback(
+    async (opts: {
+      videoId: string;
+      title: string;
+      /** Channel name. Optional because SearchResult.author is optional. */
+      author?: string;
+      thumbnail: string | null;
+      durationSeconds: number | null;
+      preset: "direct-audio" | "direct-video";
+    }) => {
+      const url = youtubeWatchUrl(opts.videoId);
+      const streamType = opts.preset === "direct-audio" ? "audio" : "video";
+      const controller = new AbortController();
+      nativeAbortRef.current = controller;
+
+      const startedAt = Date.now();
+      const inflightId = inflightIdFor(opts.videoId, opts.preset, startedAt);
+      registerInflight({
+        id: inflightId,
+        videoId: opts.videoId,
+        videoTitle: opts.title,
+        channelTitle: opts.author ?? "",
+        thumbnail: opts.thumbnail,
+        durationSeconds: opts.durationSeconds,
+        preset: opts.preset,
+        startedAt,
+      });
+
+      setDownload({
+        videoId: opts.videoId,
+        status: "queued",
+        progress: 0,
+        message: "Resolving direct URL…",
+      });
+
+      try {
+        const source = await fetchStreamSource(url, streamType, {
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        const { mime, format } = directPresetMimeAndFormat(opts.preset);
+        setDownload({
+          videoId: opts.videoId,
+          status: "processing",
+          progress: 0,
+          message: "Downloading via phone data…",
+        });
+
+        const blob = await downloadToBlob(source.url, {
+          filename: `${opts.videoId}.${format === "mp3" ? "m4a" : "mp4"}`,
+          mimeHint: mime,
+          signal: controller.signal,
+          onProgress: ({ loaded, total }) => {
+            const pct = total
+              ? Math.max(2, Math.min(99, Math.round((loaded / total) * 100)))
+              : Math.min(99, Math.round(loaded / (1024 * 1024)));
+            setDownload((current) =>
+              current && current.videoId === opts.videoId
+                ? { ...current, status: "processing", progress: pct }
+                : current,
+            );
+          },
+        });
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setDownload((current) =>
+          current && current.videoId === opts.videoId
+            ? { ...current, status: "saving", progress: 99 }
+            : current,
+        );
+
+        const item = await addItem({
+          blob,
+          title: source.title || opts.title || "Untitled",
+          sourceUrl: url,
+          format,
+          quality:
+            opts.preset === "direct-audio" ? "audio (direct)" : "360p (direct)",
+          duration: source.duration ?? opts.durationSeconds ?? null,
+          thumbnail: source.thumbnail || opts.thumbnail || undefined,
+          author: source.author || opts.author,
+        });
+
+        setDownload({
+          videoId: opts.videoId,
+          status: "complete",
+          progress: 100,
+        });
+        setAutoPlayItem(item);
+        onLibraryChanged();
+      } catch (error) {
+        if ((error as Error).name === "AbortError") {
+          // Cancellation was user-initiated; the cancel handler has
+          // already flipped `download` to "cancelled". Leave it.
+          return;
+        }
+        setDownload({
+          videoId: opts.videoId,
+          status: "failed",
+          progress: 0,
+          message:
+            error instanceof Error
+              ? `Direct download failed: ${error.message}`
+              : "Direct download failed.",
+        });
+      } finally {
+        // Whether we succeeded, aborted, or failed, the in-flight
+        // record served its purpose (the user is now back in front
+        // of a UI that can react). Clear it so the next mount
+        // doesn't see it as an orphan.
+        clearInflight(inflightId);
+        if (nativeAbortRef.current === controller) {
+          nativeAbortRef.current = null;
+        }
+      }
+    },
+    [onLibraryChanged],
+  );
+
+  /**
+   * Re-run a download that was interrupted in the previous session.
+   * Removes the orphan from both component state and localStorage
+   * up front so the banner row doesn't stick around after the tap,
+   * then delegates to executeDirectDownload which immediately
+   * registers a fresh inflight entry with a new startedAt.
+   */
+  const handleRetryOrphan = useCallback(
+    async (orphan: InflightDirectDownload) => {
+      if (
+        download &&
+        download.status !== "complete" &&
+        download.status !== "failed" &&
+        download.status !== "cancelled"
+      ) {
+        return; // single active job at a time
+      }
+      clearInflight(orphan.id);
+      setOrphanedDownloads((current) =>
+        current.filter((e) => e.id !== orphan.id),
+      );
+      await executeDirectDownload({
+        videoId: orphan.videoId,
+        title: orphan.videoTitle,
+        author: orphan.channelTitle,
+        thumbnail: orphan.thumbnail,
+        durationSeconds: orphan.durationSeconds,
+        preset: orphan.preset,
+      });
+    },
+    [download, executeDirectDownload],
+  );
+
+  const handleDismissOrphan = useCallback((id: string) => {
+    clearInflight(id);
+    setOrphanedDownloads((current) => current.filter((e) => e.id !== id));
+  }, []);
+
+  const handleDismissAllOrphans = useCallback(() => {
+    clearAllInflight();
+    setOrphanedDownloads([]);
+  }, []);
+
   const handleResultTap = useCallback(
     async (result: SearchResult) => {
       if (
@@ -567,96 +773,14 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
           return;
         }
 
-        const streamType = preset === "direct-audio" ? "audio" : "video";
-        const controller = new AbortController();
-        nativeAbortRef.current = controller;
-        setDownload({
+        await executeDirectDownload({
           videoId: result.videoId,
-          status: "queued",
-          progress: 0,
-          message: "Resolving direct URL…",
+          title: result.title,
+          author: result.author,
+          thumbnail: pickThumbnail(result.thumbnails, 480)?.url ?? null,
+          durationSeconds: result.lengthSeconds ?? null,
+          preset: preset as "direct-audio" | "direct-video",
         });
-
-        try {
-          const source = await fetchStreamSource(url, streamType, {
-            signal: controller.signal,
-          });
-          if (controller.signal.aborted) {
-            return;
-          }
-
-          const { mime, format } = directPresetMimeAndFormat(preset);
-          setDownload({
-            videoId: result.videoId,
-            status: "processing",
-            progress: 0,
-            message: "Downloading via phone data…",
-          });
-
-          const blob = await downloadToBlob(source.url, {
-            filename: `${result.videoId}.${format === "mp3" ? "m4a" : "mp4"}`,
-            mimeHint: mime,
-            signal: controller.signal,
-            onProgress: ({ loaded, total }) => {
-              const pct = total
-                ? Math.max(2, Math.min(99, Math.round((loaded / total) * 100)))
-                : Math.min(99, Math.round(loaded / (1024 * 1024)));
-              setDownload((current) =>
-                current && current.videoId === result.videoId
-                  ? { ...current, status: "processing", progress: pct }
-                  : current,
-              );
-            },
-          });
-
-          if (controller.signal.aborted) {
-            return;
-          }
-
-          setDownload((current) =>
-            current && current.videoId === result.videoId
-              ? { ...current, status: "saving", progress: 99 }
-              : current,
-          );
-
-          const item = await addItem({
-            blob,
-            title: source.title || result.title || "Untitled",
-            sourceUrl: url,
-            format,
-            quality: preset === "direct-audio" ? "audio (direct)" : "360p (direct)",
-            duration: source.duration ?? result.lengthSeconds ?? null,
-            thumbnail:
-              source.thumbnail ||
-              pickThumbnail(result.thumbnails, 480)?.url,
-            author: source.author || result.author,
-          });
-
-          setDownload({
-            videoId: result.videoId,
-            status: "complete",
-            progress: 100,
-          });
-          setAutoPlayItem(item);
-          onLibraryChanged();
-        } catch (error) {
-          if ((error as Error).name === "AbortError") {
-            return;
-          }
-          setDownload({
-            videoId: result.videoId,
-            status: "failed",
-            progress: 0,
-            message:
-              error instanceof Error
-                ? `Direct download failed: ${error.message}`
-                : "Direct download failed.",
-          });
-        } finally {
-          if (nativeAbortRef.current === controller) {
-            nativeAbortRef.current = null;
-          }
-        }
         return;
       }
 
@@ -735,7 +859,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
         });
       }
     },
-    [download, preset, androidNative, onLibraryChanged],
+    [download, preset, androidNative, onLibraryChanged, executeDirectDownload],
   );
 
   const friendlyMessage = useMemo(() => {
@@ -760,6 +884,87 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
 
   return (
     <>
+      {orphanedDownloads.length > 0 ? (
+        <section className="panel">
+          <div className="section-heading">
+            <h2>
+              Interrupted download{orphanedDownloads.length > 1 ? "s" : ""}
+            </h2>
+            {orphanedDownloads.length > 1 ? (
+              <button
+                type="button"
+                className="link-button"
+                onClick={handleDismissAllOrphans}
+              >
+                Dismiss all
+              </button>
+            ) : null}
+          </div>
+          <p className="muted-text" style={{ marginTop: 0 }}>
+            These direct downloads were running last time the app was
+            closed. Retry to fetch them again from your phone&apos;s
+            data; dismiss to forget.
+          </p>
+          <ul className="orphan-list">
+            {orphanedDownloads.map((orphan) => {
+              const ageMin = Math.max(
+                1,
+                Math.round((Date.now() - orphan.startedAt) / 60000),
+              );
+              return (
+                <li key={orphan.id} className="orphan-row">
+                  {orphan.thumbnail ? (
+                    <img
+                      className="search-thumb"
+                      src={orphan.thumbnail}
+                      alt=""
+                      loading="lazy"
+                    />
+                  ) : (
+                    <span className="search-thumb fallback" aria-hidden>
+                      ⇣
+                    </span>
+                  )}
+                  <span className="search-meta">
+                    <span className="search-title">{orphan.videoTitle}</span>
+                    <span className="search-sub">
+                      {orphan.channelTitle}
+                      {" · "}
+                      {orphan.preset === "direct-audio"
+                        ? "audio"
+                        : "video"}
+                      {" · "}
+                      {ageMin}m ago
+                    </span>
+                  </span>
+                  <span className="orphan-actions">
+                    <button
+                      type="button"
+                      onClick={() => void handleRetryOrphan(orphan)}
+                      disabled={
+                        download != null &&
+                        download.status !== "complete" &&
+                        download.status !== "failed" &&
+                        download.status !== "cancelled"
+                      }
+                    >
+                      Retry
+                    </button>
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={() => handleDismissOrphan(orphan.id)}
+                    >
+                      Dismiss
+                    </button>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
       <section className="panel">
         <div className="section-heading">
           <h2>Search YouTube</h2>
@@ -818,7 +1023,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
               {isStreamPreset(preset)
                 ? `Tap a result to ${presetLabel(preset)} (ad-free, uses your phone data).`
                 : isAndroidNativeOnlyPreset(preset)
-                  ? `Tap a result to ${presetLabel(preset)} via your phone's data (free, no proxy bytes).`
+                  ? `Tap a result to ${presetLabel(preset)} via your phone's data (free, no proxy bytes). Locking the screen is fine; swiping the app away will interrupt — you'll get a Resume prompt on reopen.`
                   : `Tap a result to download as ${presetLabel(preset)} via the worker (uses paid proxy data).`}
             </p>
           </div>

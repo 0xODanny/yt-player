@@ -254,5 +254,6 @@ read the cookies DB while the browser holds its write lock.
 - MP3 + MP4 with quality selection down to 360p — ✓
 - Ad-free streaming via direct googlevideo URLs — ✓
 - Android-native direct downloads (Capacitor app only) — ✓
+- Resume prompt for direct downloads interrupted by force-kill — ✓
 - Recent jobs list, progress bar, online indicator, URL classification hints — ✓
 - Use only on content you own or that is in the public domain.

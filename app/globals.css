@@ -1667,3 +1667,76 @@ code {
     align-items: start;
   }
 }
+
+/* Resume-banner for direct downloads interrupted by a force-kill /
+   OOM in the previous session. See lib/inflightDownloads.ts for why
+   these exist and SearchView for the rendering call site. */
+.orphan-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.orphan-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(152, 167, 194, 0.06);
+  border: 1px solid rgba(152, 167, 194, 0.12);
+}
+
+.orphan-row .search-thumb {
+  border-radius: 8px;
+}
+
+.orphan-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 6px;
+}
+
+.orphan-actions button:not(.link-button) {
+  border: 1px solid rgba(152, 167, 194, 0.25);
+  background: rgba(152, 167, 194, 0.08);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.orphan-actions button:not(.link-button):hover {
+  background: rgba(152, 167, 194, 0.16);
+}
+
+.orphan-actions button:not(.link-button):disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .orphan-row {
+    grid-template-columns: 96px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+  }
+
+  .orphan-row .search-thumb {
+    width: 96px;
+    height: 56px;
+  }
+
+  /* Push the actions onto their own row beneath the meta on phones
+     so the Retry button doesn't compete with the title for width. */
+  .orphan-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+    padding-right: 0;
+  }
+}
