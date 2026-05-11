@@ -24,3 +24,9 @@ android/app/release/
 android/app/debug/
 android/captures/
 android/app/src/main/assets/public/
+
+# Release signing — keystore + credentials never go in git
+android/signing.properties
+android/*.keystore
+android/*.jks
+android/keystore.properties

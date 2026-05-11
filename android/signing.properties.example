@@ -1,0 +1,15 @@
+# Copy this file to `signing.properties` (same directory) and fill in
+# the values from your keystore. The actual file is gitignored.
+#
+# Generate a keystore once with:
+#   keytool -genkey -v -keystore yt-player-release.keystore \
+#     -alias yt-player -keyalg RSA -keysize 2048 -validity 10000
+#
+# storeFile is resolved relative to the android/ directory, so the
+# default below works if you place the keystore at android/yt-player-
+# release.keystore. An absolute path works too.
+
+storeFile=yt-player-release.keystore
+storePassword=changeme
+keyAlias=yt-player
+keyPassword=changeme

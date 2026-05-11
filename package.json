@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "build:capacitor": "node scripts/build-capacitor.mjs",
     "cap:sync": "node scripts/build-capacitor.mjs --sync-only",
-    "cap:open:android": "cap open android"
+    "cap:open:android": "cap open android",
+    "build:android:release": "node scripts/build-capacitor.mjs && (cd android && ./gradlew assembleRelease)"
   },
   "dependencies": {
     "@capacitor/android": "^6.1.2",

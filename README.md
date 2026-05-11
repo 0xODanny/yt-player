@@ -125,23 +125,61 @@ render inside the native Android wrapper — see `lib/platform.ts`.
    sdk.dir=/Users/<you>/Library/Android/sdk
    ```
 
-### Build the APK
+### Build the debug APK (for iteration)
 
 ```bash
 npm run build:capacitor          # static export + cap sync android
 npm run cap:open:android         # launches Android Studio
-# In Android Studio: Build → Build Bundle(s) / APK(s) → Build APK(s)
+# In Android Studio: Build → Generate App Bundles or APKs → Generate APKs
 # The APK lands at android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-For a release-signed APK suitable for sideload that survives
-reinstall:
+Each rebuild of the debug APK generates a new random signing key, so
+reinstalling overwrites app data. Use the release APK below for daily
+driving.
+
+### One-time: generate a release keystore
+
+Reinstalling an Android app with a different signing key wipes its
+data. To preserve your library across rebuilds, sign every release
+APK with the same keystore.
 
 ```bash
 cd android
-./gradlew assembleRelease
-# Outputs android/app/build/outputs/apk/release/app-release-unsigned.apk
-# Sign with apksigner using your own keystore.
+keytool -genkey -v \
+  -keystore yt-player-release.keystore \
+  -alias yt-player \
+  -keyalg RSA -keysize 2048 -validity 10000
+```
+
+Answer the prompts (name, org, etc. — values don't matter for
+sideload). Pick a password you'll remember. Back this `.keystore`
+file up somewhere safe — losing it means you can never publish an
+update to the same installed app again.
+
+Then create `android/signing.properties` (gitignored) from the
+template:
+
+```bash
+cp signing.properties.example signing.properties
+# edit signing.properties: storePassword + keyPassword to the
+# values you used in keytool above
+```
+
+### Build the release APK
+
+```bash
+npm run build:android:release
+```
+
+Outputs `android/app/build/outputs/apk/release/app-release.apk`. That
+file is signed by your keystore — install over any existing release
+APK and the library + settings survive.
+
+To install over USB:
+
+```bash
+adb install -r android/app/build/outputs/apk/release/app-release.apk
 ```
 
 The app ID is `lol.pepinho.ytplayer` (configured in
