@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { SettingsProvider } from "@/lib/settings";
 import { ServiceWorkerRegistrar } from "./sw-register";
+import { ViewportLock } from "./viewport-lock";
 
 export const metadata: Metadata = {
   title: "YT Local Tool",
@@ -40,6 +41,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <ServiceWorkerRegistrar />
+        <ViewportLock />
         <SettingsProvider>{children}</SettingsProvider>
       </body>
     </html>
