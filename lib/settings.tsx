@@ -29,18 +29,7 @@ export type SearchPreset =
   | "video-720p"
   | "video-1080p"
   | "stream-audio"
-  | "stream-video"
-  // Direct-CDN HLS download: phone pulls the m3u8 manifest + every
-  // segment straight from googlevideo.com (HLS endpoints serve
-  // Access-Control-Allow-Origin: *) and we assemble the segments into
-  // a Blob locally. Worker only pays the ~50 KB metadata roundtrip
-  // through IPRoyal; the actual file body never touches the proxy or
-  // the droplet. Quality is whatever the ios/tv/mweb/android player
-  // clients still expose as a muxed HLS variant without a PO Token —
-  // typically ~360p mp4. Falls back to "no HLS available, use the
-  // worker download path" on videos that don't expose one.
-  | "direct-audio"
-  | "direct-video";
+  | "stream-video";
 
 export type Settings = {
   pipAuto: boolean;
@@ -57,6 +46,44 @@ export const DEFAULT_SETTINGS: Settings = {
   confirmDelete: true,
   searchPreset: "mp3",
 };
+
+const KNOWN_PRESETS: SearchPreset[] = [
+  "mp3",
+  "video-144p",
+  "video-240p",
+  "video-360p",
+  "video-720p",
+  "video-1080p",
+  "stream-audio",
+  "stream-video",
+];
+
+/**
+ * Map retired SearchPreset values back into a current one so users
+ * with a stale localStorage entry don't get stuck on an unrecognized
+ * preset that no chip / option matches.
+ *
+ * History: `direct-audio` / `direct-video` were a short-lived
+ * "save without using IPRoyal bandwidth" experiment that died on
+ * YouTube's PO Token enforcement in 2026. yt-dlp via the
+ * ios/tv/mweb/android player_clients returns only the legacy itag
+ * 18 progressive URL for ~all videos now. Browser fetch() can't
+ * pull itag 18 (no CORS), and the worker can't proxy it either
+ * (googlevideo blocks DigitalOcean's ASN). The streaming path is
+ * unaffected because <video src=...> uses opaque media load, which
+ * doesn't go through CORS.
+ */
+function normalizeSearchPreset(value: unknown): SearchPreset {
+  if (
+    typeof value === "string" &&
+    KNOWN_PRESETS.includes(value as SearchPreset)
+  ) {
+    return value as SearchPreset;
+  }
+  if (value === "direct-audio") return "mp3";
+  if (value === "direct-video") return "video-360p";
+  return DEFAULT_SETTINGS.searchPreset;
+}
 
 export type SettingDefinitionToggle = {
   type?: "toggle";
@@ -97,13 +124,11 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     key: "searchPreset",
     label: "Default action from search",
     description:
-      "What happens when you tap a result. Stream plays the video directly (ad-free, your phone data). Save (HLS) pulls the m3u8 + segments straight from CDN to your phone — quality is whatever HLS variant YouTube exposes (usually ~360p) and no paid proxy bandwidth is consumed. Download via worker uses yt-dlp for full quality and goes through the paid IPRoyal proxy.",
+      "What happens when you tap a result. Stream plays the video directly (ad-free, your phone data). Download via worker uses yt-dlp through the IPRoyal residential proxy for full quality and saves to your library.",
     section: "Search",
     options: [
       { value: "stream-audio", label: "Stream audio (no save, ad-free)" },
       { value: "stream-video", label: "Stream video (no save, ad-free)" },
-      { value: "direct-audio", label: "Save audio (HLS, phone data only)" },
-      { value: "direct-video", label: "Save video (HLS, phone data only)" },
       { value: "mp3", label: "Download MP3 via worker (~5 MB)" },
       { value: "video-144p", label: "Download 144p via worker (~12 MB)" },
       { value: "video-240p", label: "Download 240p via worker (~25 MB)" },
@@ -140,7 +165,13 @@ function loadSettings(): Settings {
       return DEFAULT_SETTINGS;
     }
     const parsed = JSON.parse(raw) as Partial<Settings>;
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    // searchPreset may carry a retired value (e.g. "direct-audio") from
+    // an older app version sitting in the user's localStorage. Migrate
+    // it to a current preset so the UI stays consistent and the tap
+    // handler doesn't fall through to its default branch.
+    const merged: Settings = { ...DEFAULT_SETTINGS, ...parsed };
+    merged.searchPreset = normalizeSearchPreset(merged.searchPreset);
+    return merged;
   } catch {
     return DEFAULT_SETTINGS;
   }

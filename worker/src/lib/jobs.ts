@@ -501,22 +501,6 @@ export type WorkerStreamResult = {
    * or to wire up hls.js (needed on Chrome/Firefox).
    */
   protocol?: string;
-  /**
-   * Container reported by yt-dlp (e.g. "mp4", "m4a", "webm"). The
-   * direct-CDN download path on the frontend uses this to pick a sensible
-   * filename / MIME hint when saving the blob to the library.
-   */
-  ext?: string;
-  /**
-   * The exact HTTP request headers yt-dlp would use to fetch this URL.
-   * Critically includes the User-Agent of whichever player_client was
-   * picked (ios / tv / mweb / android), which googlevideo CDN validates
-   * against the signed URL — a mismatched UA produces a 403 even though
-   * the URL itself is valid. The frontend forwards these to the worker
-   * byte proxy so our outbound fetch looks identical to what yt-dlp
-   * would have sent.
-   */
-  httpHeaders?: Record<string, string>;
   title?: string;
   author?: string;
   thumbnail?: string;
@@ -554,74 +538,42 @@ export type WorkerStreamResult = {
 export async function getStreamUrl(
   rawUrl: string,
   type: "audio" | "video",
-  options: { forSave?: boolean } = {},
 ): Promise<WorkerStreamResult> {
   const normalizedUrl = normalizeMediaSourceUrl(rawUrl);
   const useProxy = shouldUseProxyForUrl(normalizedUrl);
-  const forSave = Boolean(options.forSave);
 
   // Override the default player_client list. Use a broader set than just
   // ios/tv:
-  //   - ios:  returns HLS (m3u8) for most videos. URLs not IP-bound.
-  //   - tv:   returns HLS too. URLs not IP-bound.
+  //   - ios:  used to return HLS (m3u8) for most videos. URLs not IP-bound.
+  //   - tv:   used to return HLS too. URLs not IP-bound.
   //   - mweb: typically returns progressive itag 18 (360p mp4) — our
   //           best progressive fallback when HLS isn't available.
   //   - android: similar to mweb, broader format coverage on some videos
   //              that ios refuses (e.g. some news/political channels).
   // None of these embed the requesting IP into the URL signature.
+  //
+  // 2026 reality (verified empirically against both music-label and
+  // political news content): ios returns nothing without a valid PO
+  // Token, tv / mweb / android return only the legacy itag 18 (360p
+  // progressive mp4 + AAC). yt-dlp can still solve the JS challenge
+  // (`[jsc:deno] Solving JS challenges using deno`) but YouTube no
+  // longer accepts those solutions for the adaptive/HLS endpoints.
+  // For STREAMING this is fine: <video src=itag18URL> plays via
+  // opaque media load (no CORS check) so the phone fetches the bytes
+  // directly from googlevideo. We just need to make sure the format
+  // chain prefers itag 18 first, since the HLS branches will not
+  // match.
   const playerClients = "ios,tv,mweb,android";
 
-  // Format selection notes:
-  //   yt-dlp's `best` keyword in recent versions means "best *combined*
-  //   audio+video stream" — it does NOT fall back to adaptive formats.
-  //   So for videos that only have separate audio/video streams, plain
-  //   `best` returns "Requested format is not available." That's why
-  //   the chain has to be explicit and HLS-first: HLS variant URLs are
-  //   the only way to get a single playable URL for adaptive content.
-  // 2024+ reality: YouTube requires "PO Tokens" (Proof-of-Origin) for most
-  // formats served by the ios/tv/mweb/android clients, and skips them
-  // entirely when no PO Token is provided. The DRM checker also blocks
-  // tv-client https. Result: on many videos the only format still
-  // streamable is the legacy progressive itag 18 (360p mp4 with AAC).
-  // That's fine for phone streaming and is what we end up using a lot
-  // of the time. HLS is kept as the *preferred* path for videos that
-  // do still expose it without a PO Token.
-  //
-  // For audio-only streams, the m4a-only formats are also PO-Token-
-  // gated, so we have to fall back to itag 18 too — the <audio>
-  // element plays the audio track of an mp4 just fine, ignoring the
-  // video. (We never ship the bytes, the browser fetches them.)
-  // yt-dlp gotcha: `bestaudio` is *strictly* audio-only — it skips formats
-  // that contain a video track even if their audio is what we want. So
-  // when only itag 18 (a progressive mp4 with audio+video) is available,
-  // `bestaudio` matches nothing and we fall through to the literal `18`
-  // anyway. Use `bestaudio*` (audio-or-anything-with-audio) as a more
-  // robust matcher and put `18` very early so the most reliable
-  // single-URL playable stream is preferred for music label content.
-  //
-  // FOR-SAVE MODE (client-side HLS download to OPFS):
-  //   The original "fetch the progressive googlevideo URL straight to
-  //   OPFS" idea died on two facts:
-  //     1. googlevideo.com does NOT send Access-Control-Allow-Origin
-  //        for `videoplayback?...` (it only does for HLS), so the
-  //        browser fetch() fails CORS.
-  //     2. We tried proxying the bytes through the worker. googlevideo
-  //        rejects datacenter ASNs (DigitalOcean, AWS, etc.) with an
-  //        empty-body 403, so the worker can't fetch them either
-  //        from its own IP.
-  //   The only path left that keeps the bytes off IPRoyal AND off the
-  //   droplet is HLS-client-side: the phone (residential IP) fetches
-  //   the m3u8 + segments directly from googlevideo, since HLS *does*
-  //   carry CORS. So when forSave=true we force HLS-only and let the
-  //   frontend assemble segments into a Blob. If no muxed HLS variant
-  //   exists for a given video, yt-dlp returns "Requested format is
-  //   not available" and the frontend surfaces that — the user can
-  //   fall back to the regular worker download for that one video.
-  const formatSelector = forSave
-    ? type === "audio"
-      ? "ba[protocol*=m3u8]/b[protocol*=m3u8]"
-      : "best[protocol*=m3u8][acodec!=none][vcodec!=none]/b[protocol*=m3u8]"
-    : type === "audio"
+  // Format selection chain. itag 18 / 22 sit at the front because
+  // they're the most reliable single-file progressive streams
+  // (predate the PO Token era). HLS / muxed-mp4 branches are kept
+  // as preferred picks for the small minority of videos that still
+  // expose them. Audio-only `bestaudio*` is the last-resort branch
+  // for the rare video that has audio HLS but no usable video
+  // stream — <audio> picks up the audio track of any of these.
+  const formatSelector =
+    type === "audio"
       ? "ba[acodec^=mp4a]/ba[ext=m4a]/140/18/ba*/b"
       : "best[protocol*=m3u8]/b[ext=mp4][acodec!=none][vcodec!=none]/18/22/ba*+bv*/b";
 
@@ -665,10 +617,9 @@ export async function getStreamUrl(
     // render verbatim — much better UX than dumping yt-dlp's argv at
     // the user.
     if (/requested format is not available/i.test(cleaned)) {
-      const hint = forSave
-        ? "No HLS-muxed variant is available for this video. Use the regular ↓ Video / ↓ MP3 buttons to download via the worker instead."
-        : "No playable single-stream format is available for this video.";
-      throw new Error(hint);
+      throw new Error(
+        "No playable single-stream format is available for this video.",
+      );
     }
 
     throw new Error(cleaned || "yt-dlp failed to resolve a stream URL.");
@@ -676,19 +627,11 @@ export async function getStreamUrl(
 
   const info = JSON.parse(stdout) as YtDlpVideoInfo & {
     url?: string;
-    ext?: string;
-    http_headers?: Record<string, string>;
-    requested_formats?: Array<{
-      url?: string;
-      ext?: string;
-      http_headers?: Record<string, string>;
-    }>;
+    requested_formats?: Array<{ url?: string }>;
     formats?: Array<{
       url?: string;
       protocol?: string;
       format_id?: string;
-      ext?: string;
-      http_headers?: Record<string, string>;
     }>;
   };
 
@@ -735,35 +678,10 @@ export async function getStreamUrl(
     protocol = matching?.protocol;
   }
 
-  // ext: top-level when a single format was selected, else the first
-  // requested_formats entry. Used by the frontend's direct-CDN download
-  // path to pick a sensible file extension when saving to OPFS.
-  const ext =
-    typeof info.ext === "string"
-      ? info.ext
-      : info.requested_formats?.[0]?.ext;
-
-  // http_headers: yt-dlp emits these per-format and they encode which
-  // player_client signed the URL (User-Agent, Origin, Sec-Fetch-*, etc.).
-  // googlevideo CDN cross-checks the User-Agent against the URL
-  // signature and 403s on mismatch — so we must forward exactly these
-  // headers when our worker proxy fetches the bytes, or we'd get the
-  // same 403 a curl-with-default-UA gets.
-  const formatsWithUrl = info.formats as
-    | Array<{ url?: string; http_headers?: Record<string, string> }>
-    | undefined;
-  const matchingFormat = formatsWithUrl?.find((f) => f.url === directUrl);
-  const httpHeaders =
-    info.http_headers ||
-    info.requested_formats?.[0]?.http_headers ||
-    matchingFormat?.http_headers;
-
   return {
     url: directUrl,
     type,
     protocol,
-    ext,
-    httpHeaders,
     title: info.title || undefined,
     author: info.uploader || info.channel,
     thumbnail: info.thumbnail,

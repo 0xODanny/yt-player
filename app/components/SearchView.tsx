@@ -19,11 +19,7 @@ import {
   type SearchResult,
 } from "@/lib/search";
 import { type SearchPreset, useSettings } from "@/lib/settings";
-import {
-  downloadStreamToBlob,
-  fetchStreamSource,
-  type StreamSource,
-} from "@/lib/stream";
+import { fetchStreamSource, type StreamSource } from "@/lib/stream";
 
 import { MediaPlayer } from "./MediaPlayer";
 
@@ -126,17 +122,6 @@ function isStreamPreset(preset: SearchPreset): boolean {
   return preset === "stream-audio" || preset === "stream-video";
 }
 
-/**
- * "Direct" presets bypass the worker entirely for the actual bytes —
- * the phone fetches the resolved googlevideo.com URL itself and pipes
- * the response straight into OPFS. The trade-off is quality (capped at
- * whatever the ios/tv/mweb/android player clients serve without a PO
- * Token — usually 360p mp4) in exchange for $0 worker bandwidth.
- */
-function isDirectDownloadPreset(preset: SearchPreset): boolean {
-  return preset === "direct-audio" || preset === "direct-video";
-}
-
 function presetToJobPayload(preset: SearchPreset): {
   format: JobPayload["format"];
   quality: JobPayload["quality"];
@@ -155,8 +140,6 @@ function presetToJobPayload(preset: SearchPreset): {
     case "mp3":
     case "stream-audio":
     case "stream-video":
-    case "direct-audio":
-    case "direct-video":
     default:
       return { format: "mp3", quality: "best" };
   }
@@ -178,10 +161,6 @@ function presetLabel(preset: SearchPreset): string {
       return "audio stream";
     case "stream-video":
       return "video stream";
-    case "direct-audio":
-      return "direct audio";
-    case "direct-video":
-      return "direct video";
     case "mp3":
     default:
       return "MP3 audio";
@@ -191,8 +170,6 @@ function presetLabel(preset: SearchPreset): string {
 const PRESET_OPTIONS: Array<{ value: SearchPreset; label: string }> = [
   { value: "stream-audio", label: "▶ Audio" },
   { value: "stream-video", label: "▶ Video" },
-  { value: "direct-audio", label: "⬇︎ Audio" },
-  { value: "direct-video", label: "⬇︎ Video" },
   { value: "mp3", label: "↓ MP3" },
   { value: "video-144p", label: "↓ 144p" },
   { value: "video-240p", label: "↓ 240p" },
@@ -212,10 +189,6 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   const [autoPlayStream, setAutoPlayStream] = useState<StreamSource | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
-  // Controller for an in-flight direct-CDN download (the bytes flow phone
-  // ↔ googlevideo.com directly, so `cancelJob` doesn't apply — we need
-  // a local AbortController to cut the fetch).
-  const directAbortRef = useRef<AbortController | null>(null);
 
   const preset = settings.searchPreset;
 
@@ -258,22 +231,13 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   }, []);
 
   /**
-   * Abort whichever in-flight download applies to the current state:
-   *   - Worker job (download.jobId set): DELETE /jobs/:id so yt-dlp is
-   *     killed on the server and the partial file is cleaned up.
-   *   - Direct-CDN download (no jobId, bytes flowing phone ↔
-   *     googlevideo.com): abort the local fetch via AbortController so
-   *     the body stream stops and no more of the user's mobile data is
-   *     spent.
-   *
-   * Either way the local download state is flipped to "cancelled" so
-   * the polling effect exits, the save-to-library branch is skipped,
-   * and the single-active-download lock releases.
+   * Cancel the in-flight worker download for the current result.
+   * DELETE /jobs/:id makes the worker kill its yt-dlp child process,
+   * unlink any partial output, and flip the job to "cancelled"; we
+   * also flip our local state so the polling effect exits and the
+   * single-active-download lock releases.
    */
   const handleCancelDownload = useCallback(async () => {
-    directAbortRef.current?.abort();
-    directAbortRef.current = null;
-
     const jobId = download?.jobId;
     if (jobId) {
       try {
@@ -472,125 +436,6 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
 
       const url = youtubeWatchUrl(result.videoId);
 
-      // Direct-CDN download path: ask the worker to hand back the HLS
-      // manifest URL, then the phone fetches the manifest + every
-      // segment straight from googlevideo.com (HLS endpoints carry
-      // Access-Control-Allow-Origin: *) and we glue the segments into
-      // a Blob locally. Net effect: zero IPRoyal residential bandwidth
-      // (only the ~50 KB metadata roundtrip needs the proxy) AND zero
-      // droplet egress (the droplet's datacenter IP is on googlevideo's
-      // ASN blocklist, so we never even try to fetch segments from it).
-      //
-      // Quality is whatever HLS variant the ios/tv/mweb/android player
-      // clients still expose without a PO Token — usually a muxed
-      // ~360p mp4 stream for video, single-bitrate m4a for audio. If
-      // a particular video doesn't expose any HLS variants, the worker
-      // returns a 502 and the user can fall back to the worker
-      // download path for that one video.
-      if (isDirectDownloadPreset(preset)) {
-        const directType: "audio" | "video" =
-          preset === "direct-audio" ? "audio" : "video";
-
-        setDownload({
-          videoId: result.videoId,
-          status: "processing",
-          progress: 0,
-        });
-
-        const controller = new AbortController();
-        directAbortRef.current = controller;
-
-        try {
-          const stream = await fetchStreamSource(url, directType, {
-            forSave: true,
-            signal: controller.signal,
-          });
-
-          // Sniff a sensible MIME type from yt-dlp's reported container
-          // so the resulting Blob is tagged correctly (helps OPFS /
-          // <audio>/<video> pick the right decoder on every platform).
-          // For HLS we usually end up muxing mp4 fragments so video/mp4
-          // (or audio/mp4 for the audio-only case) is correct
-          // regardless of yt-dlp's `ext` hint.
-          const mimeHint =
-            directType === "audio" ? "audio/mp4" : "video/mp4";
-
-          const blob = await downloadStreamToBlob(stream.url, {
-            signal: controller.signal,
-            mimeHint,
-            protocol: stream.protocol,
-            onProgress: (loaded, total) => {
-              const pct =
-                total && total > 0
-                  ? Math.min(99, Math.floor((loaded / total) * 100))
-                  : 0;
-              setDownload((current) =>
-                current && current.videoId === result.videoId
-                  ? { ...current, progress: pct }
-                  : current,
-              );
-            },
-          });
-
-          // Save to library. We pin format=mp3 for audio so the OPFS
-          // filename ends with .mp3 and the library UI treats it as
-          // audio — the actual bytes are an mp4 audio track but stay
-          // sandboxed inside OPFS so the extension mismatch is
-          // invisible and the in-PWA <audio> tag sniffs the real
-          // container.
-          const itemFormat: "mp3" | "mp4" =
-            directType === "audio" ? "mp3" : "mp4";
-          const qualityLabel =
-            directType === "audio"
-              ? "audio · HLS (phone data)"
-              : "video · HLS (phone data, ~360p)";
-
-          const item = await addItem({
-            blob,
-            title: stream.title || result.title,
-            sourceUrl: url,
-            format: itemFormat,
-            quality: qualityLabel,
-            duration:
-              stream.duration ?? result.lengthSeconds ?? null,
-            thumbnail:
-              stream.thumbnail ||
-              pickThumbnail(result.thumbnails, 480)?.url,
-            author: stream.author || result.author,
-          });
-
-          directAbortRef.current = null;
-          setDownload({
-            videoId: result.videoId,
-            status: "complete",
-            progress: 100,
-          });
-          setAutoPlayItem(item);
-          onLibraryChanged();
-        } catch (error) {
-          directAbortRef.current = null;
-          if ((error as { name?: string })?.name === "AbortError") {
-            setDownload({
-              videoId: result.videoId,
-              status: "cancelled",
-              progress: 0,
-              message: "Cancelled by user.",
-            });
-          } else {
-            setDownload({
-              videoId: result.videoId,
-              status: "failed",
-              progress: 0,
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "Direct download failed.",
-            });
-          }
-        }
-        return;
-      }
-
       // Stream path: ask the worker to resolve a googlevideo.com URL we can
       // play directly, then open MediaPlayer with that URL. No download,
       // no library save, no IPRoyal bandwidth (just the tiny metadata
@@ -679,17 +524,6 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
       lower.includes("login_required")
     ) {
       return "YouTube blocked this download from the server. Try a different video, or set up a residential proxy / cookies.";
-    }
-    // Worker maps "Requested format is not available" to a friendly
-    // hint already, but old worker versions and the raw yt-dlp text
-    // can both reach the PWA. Catch both shapes and surface a clean
-    // one-line message that points the user at the worker-download
-    // alternative.
-    if (
-      lower.includes("no hls-muxed variant") ||
-      lower.includes("requested format is not available")
-    ) {
-      return "This video doesn't expose a muxed HLS variant. Tap one of the ↓ Video / ↓ MP3 buttons to download via the worker instead.";
     }
     // Belt-and-suspenders: never render an error containing what
     // looks like a `user:password@host` URL, even if a worker layer
