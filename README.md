@@ -185,6 +185,42 @@ adb install -r android/app/build/outputs/apk/release/app-release.apk
 The app ID is `lol.pepinho.ytplayer` (configured in
 `capacitor.config.ts`).
 
+## Refreshing YouTube Cookies
+
+YouTube's session cookies expire every few weeks. When that happens,
+yt-dlp starts returning `Sign in to confirm you're not a bot` for
+music-restricted and newer content, and the worker /stream endpoint
+hands a 502 to the Capacitor app.
+
+To swap in a fresh set of cookies from a logged-in browser on your
+Mac to the droplet in one shot:
+
+```bash
+npm run refresh:cookies            # uses Chrome by default
+npm run refresh:cookies firefox    # any browser supported by yt-dlp
+```
+
+The script:
+
+1. Runs `yt-dlp --cookies-from-browser <browser>` locally to extract
+   the full cookie set (including HttpOnly auth cookies that
+   browser extensions can't see).
+2. Sanity-checks that the file actually contains the `__Secure-3PSID`
+   / `SAPISID` family — fails fast if you're not actually signed in.
+3. Uploads to `/etc/yt-worker-cookies.txt` on the droplet over scp.
+4. Runs `chmod 600` + `pm2 restart yt-worker` over ssh.
+
+Defaults assume the droplet at `root@167.71.59.98` and pm2 process
+name `yt-worker`. Override with env vars:
+
+```bash
+YT_DROPLET=root@1.2.3.4 npm run refresh:cookies
+YT_PM2_PROCESS=other-worker npm run refresh:cookies
+```
+
+Important: close the browser (Cmd+Q) before running. yt-dlp can't
+read the cookies DB while the browser holds its write lock.
+
 ## Status
 
 - Frontend PWA with installable manifest and offline shell — ✓
