@@ -517,6 +517,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
           const blob = await downloadStreamToBlob(stream.url, {
             signal: controller.signal,
             mimeHint,
+            userAgent: stream.httpHeaders?.["User-Agent"],
             onProgress: (loaded, total) => {
               const pct =
                 total && total > 0

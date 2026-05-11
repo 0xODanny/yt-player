@@ -29,6 +29,14 @@ export type StreamSource = {
    * the blob is saved to the OPFS library.
    */
   ext?: string;
+  /**
+   * The exact HTTP request headers yt-dlp says this URL needs — most
+   * importantly the User-Agent of the player_client that signed it.
+   * googlevideo CDN cross-checks UA against the URL signature, so when
+   * we round-trip the bytes through the worker proxy we have to forward
+   * this UA or we get 403 on an otherwise-valid URL.
+   */
+  httpHeaders?: Record<string, string>;
   title?: string;
   author?: string;
   thumbnail?: string;
@@ -158,13 +166,24 @@ export async function downloadStreamToBlob(
     signal?: AbortSignal;
     mimeHint?: string;
     onProgress?: (loaded: number, total: number | null) => void;
+    /**
+     * The User-Agent yt-dlp says this URL was signed for. The worker
+     * proxy forwards this to googlevideo via the X-Proxy-User-Agent
+     * header — without it googlevideo 403s the signed URL because the
+     * default Node/undici UA doesn't match what the player_client used
+     * when the URL was minted.
+     */
+    userAgent?: string;
   } = {},
 ): Promise<Blob> {
   const proxy = getStreamProxyUrl(streamUrl);
-  const headers: HeadersInit = {};
+  const headers: Record<string, string> = {};
   const apiKey = process.env.NEXT_PUBLIC_WORKER_API_KEY?.trim();
   if (proxy.isExternal && apiKey) {
-    (headers as Record<string, string>).Authorization = `Bearer ${apiKey}`;
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+  if (options.userAgent) {
+    headers["X-Proxy-User-Agent"] = options.userAgent;
   }
 
   const response = await fetch(proxy.url, {

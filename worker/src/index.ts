@@ -22,8 +22,12 @@ const port = Number(process.env.PORT || 3001);
 
 const corsOptions: cors.CorsOptions = {
   origin: process.env.ALLOWED_ORIGIN?.trim() || "http://localhost:3002",
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  methods: ["GET", "POST", "DELETE", "OPTIONS"],
+  // X-Proxy-User-Agent lets the PWA round-trip yt-dlp's expected
+  // per-format User-Agent into the worker byte-proxy. Without it the
+  // proxy fetches googlevideo with the wrong UA and gets 403 on the
+  // signed URL.
+  allowedHeaders: ["Content-Type", "Authorization", "X-Proxy-User-Agent"],
   credentials: false,
 };
 

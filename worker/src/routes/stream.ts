@@ -128,7 +128,36 @@ streamRouter.get("/proxy", async (request, response) => {
   });
 
   try {
-    const upstreamHeaders: Record<string, string> = {};
+    // googlevideo CDN cross-checks several request headers against the
+    // signed URL:
+    //   - User-Agent must match the player_client that signed the URL
+    //     (a generic undici / curl UA → 403 even on a valid URL).
+    //   - A Range header is expected (browsers always send one for
+    //     media); without it some endpoints respond 403.
+    //
+    // We forward whatever User-Agent the PWA passed in `X-Proxy-User-
+    // Agent` (yt-dlp tells us exactly which UA the matched format
+    // expects via http_headers; the PWA stashes it on the stream
+    // response and round-trips it here). If the header is missing we
+    // fall back to a recent iOS Safari UA — close enough to the `ios`
+    // player_client default that googlevideo accepts it for most
+    // formats.
+    const fallbackUA =
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) " +
+      "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+    const proxiedUA =
+      typeof request.headers["x-proxy-user-agent"] === "string"
+        ? (request.headers["x-proxy-user-agent"] as string)
+        : fallbackUA;
+
+    const upstreamHeaders: Record<string, string> = {
+      "User-Agent": proxiedUA,
+      Accept: "*/*",
+      "Accept-Language": "en-US,en;q=0.9",
+      // Default Range so the request looks like a normal media fetch.
+      // Overridden below if the client (PWA) actually sent one.
+      Range: "bytes=0-",
+    };
     if (typeof request.headers.range === "string") {
       upstreamHeaders.Range = request.headers.range;
     }
@@ -137,6 +166,24 @@ streamRouter.get("/proxy", async (request, response) => {
       headers: upstreamHeaders,
       signal: upstreamAbort.signal,
     });
+
+    if (upstream.status >= 400) {
+      // Read a short prefix of the body so the next time something
+      // breaks we don't just see "403" in the logs — we see WHY.
+      // googlevideo's 4xx responses are tiny HTML or text and safe
+      // to peek at; cap at 1 KB so we don't accidentally log
+      // megabytes if some other endpoint were ever proxied.
+      let preview = "";
+      try {
+        const text = await upstream.clone().text();
+        preview = text.slice(0, 1024);
+      } catch {
+        preview = "(could not read body)";
+      }
+      console.error(
+        `[stream proxy] upstream ${upstream.status} for ${target.hostname}${target.pathname.slice(0, 60)} (UA=${proxiedUA.slice(0, 40)}...): ${preview.replace(/\s+/g, " ")}`,
+      );
+    }
 
     response.status(upstream.status);
 

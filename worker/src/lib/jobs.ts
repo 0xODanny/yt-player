@@ -507,6 +507,16 @@ export type WorkerStreamResult = {
    * filename / MIME hint when saving the blob to the library.
    */
   ext?: string;
+  /**
+   * The exact HTTP request headers yt-dlp would use to fetch this URL.
+   * Critically includes the User-Agent of whichever player_client was
+   * picked (ios / tv / mweb / android), which googlevideo CDN validates
+   * against the signed URL — a mismatched UA produces a 403 even though
+   * the URL itself is valid. The frontend forwards these to the worker
+   * byte proxy so our outbound fetch looks identical to what yt-dlp
+   * would have sent.
+   */
+  httpHeaders?: Record<string, string>;
   title?: string;
   author?: string;
   thumbnail?: string;
@@ -629,12 +639,18 @@ export async function getStreamUrl(
   const info = JSON.parse(stdout) as YtDlpVideoInfo & {
     url?: string;
     ext?: string;
-    requested_formats?: Array<{ url?: string; ext?: string }>;
+    http_headers?: Record<string, string>;
+    requested_formats?: Array<{
+      url?: string;
+      ext?: string;
+      http_headers?: Record<string, string>;
+    }>;
     formats?: Array<{
       url?: string;
       protocol?: string;
       format_id?: string;
       ext?: string;
+      http_headers?: Record<string, string>;
     }>;
   };
 
@@ -689,11 +705,27 @@ export async function getStreamUrl(
       ? info.ext
       : info.requested_formats?.[0]?.ext;
 
+  // http_headers: yt-dlp emits these per-format and they encode which
+  // player_client signed the URL (User-Agent, Origin, Sec-Fetch-*, etc.).
+  // googlevideo CDN cross-checks the User-Agent against the URL
+  // signature and 403s on mismatch — so we must forward exactly these
+  // headers when our worker proxy fetches the bytes, or we'd get the
+  // same 403 a curl-with-default-UA gets.
+  const formatsWithUrl = info.formats as
+    | Array<{ url?: string; http_headers?: Record<string, string> }>
+    | undefined;
+  const matchingFormat = formatsWithUrl?.find((f) => f.url === directUrl);
+  const httpHeaders =
+    info.http_headers ||
+    info.requested_formats?.[0]?.http_headers ||
+    matchingFormat?.http_headers;
+
   return {
     url: directUrl,
     type,
     protocol,
     ext,
+    httpHeaders,
     title: info.title || undefined,
     author: info.uploader || info.channel,
     thumbnail: info.thumbnail,
