@@ -185,6 +185,32 @@ adb install -r android/app/build/outputs/apk/release/app-release.apk
 The app ID is `lol.pepinho.ytplayer` (configured in
 `capacitor.config.ts`).
 
+## Custom Icon & Splash
+
+The Android app currently ships with the default Capacitor launcher
+on a black adaptive-icon background, and a solid-black splash screen
+on every Android version (Android 12+ uses the native SplashScreen
+API, 11 and below use a legacy drawable — both point at the same
+`@color/splashBackground = #000000`).
+
+To swap in custom branding:
+
+1. Drop a 1024×1024 transparent PNG of your logo at
+   `resources/logo.png` (see `resources/README.md` for details).
+2. Regenerate:
+
+   ```bash
+   npm run assets:generate
+   npm run build:android:release
+   adb install -r android/app/build/outputs/apk/release/app-release.apk
+   ```
+
+The generator rewrites every density of the launcher icon,
+adaptive-icon foreground, and splash image. The black background is
+hard-coded in the `assets:generate` script in `package.json` — edit
+the `--iconBackgroundColor` / `--splashBackgroundColor` flags to
+change it.
+
 ## Refreshing YouTube Cookies
 
 YouTube's session cookies expire every few weeks. When that happens,

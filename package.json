@@ -12,7 +12,8 @@
     "cap:sync": "node scripts/build-capacitor.mjs --sync-only",
     "cap:open:android": "cap open android",
     "build:android:release": "node scripts/build-capacitor.mjs && (cd android && ./gradlew assembleRelease)",
-    "refresh:cookies": "./scripts/refresh-yt-cookies.sh"
+    "refresh:cookies": "./scripts/refresh-yt-cookies.sh",
+    "assets:generate": "capacitor-assets generate --android --iconBackgroundColor '#000000' --splashBackgroundColor '#000000' --iconBackgroundColorDark '#000000' --splashBackgroundColorDark '#000000'"
   },
   "dependencies": {
     "@capacitor/android": "^6.1.2",
@@ -24,6 +25,7 @@
     "react-dom": "18.3.1"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^6.1.2",
     "@types/node": "20.17.57",
     "@types/react": "18.3.18",

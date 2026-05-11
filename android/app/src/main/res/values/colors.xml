@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Theme colors referenced by android/app/src/main/res/values/styles.xml -->
+    <color name="colorPrimary">#000000</color>
+    <color name="colorPrimaryDark">#000000</color>
+    <color name="colorAccent">#FF0000</color>
+
+    <!-- Splash screen background. Matches the dark PWA chrome so there's
+         no white flash between OS splash and the WebView painting. -->
+    <color name="splashBackground">#000000</color>
+</resources>
