@@ -9,6 +9,7 @@ import {
   recentJobSamples,
   recentStreamSamples,
 } from "../lib/metrics";
+import { streamCacheStats } from "../lib/streamCache";
 
 const execFileAsync = promisify(execFile);
 const diagRouter = Router();
@@ -113,8 +114,18 @@ function p95(values: number[]): number | null {
 diagRouter.get("/", async (_req, res) => {
   const streamSamples = recentStreamSamples();
   const jobSamples = recentJobSamples();
+  const cacheStats = streamCacheStats();
 
-  const streamElapsed = streamSamples.map((s) => s.elapsedMs);
+  // Separate cache hits from cache misses when computing the median
+  // and p95 — hits are sub-ms and would bias the "is yt-dlp slow
+  // right now?" question. /diag exposes both so you can spot a
+  // regression in either path independently.
+  const missElapsed = streamSamples
+    .filter((s) => !s.cacheHit)
+    .map((s) => s.elapsedMs);
+  const hitElapsed = streamSamples
+    .filter((s) => s.cacheHit)
+    .map((s) => s.elapsedMs);
   const jobElapsed = jobSamples
     .filter((s) => s.status === "complete")
     .map((s) => s.elapsedMs);
@@ -167,8 +178,14 @@ diagRouter.get("/", async (_req, res) => {
                 streamSamples.length
               ).toFixed(2),
             ),
-      streamMedianMs: median(streamElapsed),
-      streamP95Ms: p95(streamElapsed),
+      // Median + p95 over yt-dlp resolutions only (cache hits removed)
+      // so the number reflects what a cold tap actually costs.
+      streamMissMedianMs: median(missElapsed),
+      streamMissP95Ms: p95(missElapsed),
+      streamHitMedianMs: median(hitElapsed),
+      streamHitCount: hitElapsed.length,
+      streamMissCount: missElapsed.length,
+      streamCache: cacheStats,
       jobCount: jobSamples.length,
       jobCompleteRate:
         jobSamples.length === 0

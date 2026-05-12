@@ -11,6 +11,13 @@ import {
   safeHostOf,
 } from "./metrics";
 import { cleanupExpiredDownloads, DOWNLOADS_DIR, ensureDownloadsDir } from "./storage";
+import {
+  getCachedStream,
+  getInflightStream,
+  setCachedStream,
+  trackInflightStream,
+  videoIdFromUrl,
+} from "./streamCache";
 import type {
   JobCreateResponse,
   JobMetadata,
@@ -546,22 +553,99 @@ export async function getStreamUrl(
   type: "audio" | "video",
 ): Promise<WorkerStreamResult> {
   const startedAt = Date.now();
+  // Validate first so a "Playlists not supported" 400 never touches
+  // the cache or the inflight map.
   const normalizedUrl = normalizeMediaSourceUrl(rawUrl);
-  const useProxy = shouldUseProxyForUrl(normalizedUrl);
-  // Wrap the whole resolution so /diag sees both happy-path latency
-  // (slow yt-dlp / proxy / cookie path) and error rates without each
-  // call site having to remember to record. The samples ring is
-  // capped at 30 entries so even a hot loop can't blow memory.
-  const recordOutcome = (ok: boolean, error?: string) => {
+  const sampleHost = safeHostOf(normalizedUrl);
+  const videoId = videoIdFromUrl(normalizedUrl);
+
+  const recordOutcome = (
+    ok: boolean,
+    extra: { error?: string; cacheHit?: boolean } = {},
+  ) => {
     recordStreamSample({
       at: startedAt,
       elapsedMs: Date.now() - startedAt,
       type,
-      host: safeHostOf(normalizedUrl),
+      host: sampleHost,
       ok,
-      error: error ? sanitizeErrorMessage(error).slice(0, 120) : undefined,
+      cacheHit: extra.cacheHit,
+      error: extra.error
+        ? sanitizeErrorMessage(extra.error).slice(0, 120)
+        : undefined,
     });
   };
+
+  // Fast path 1 — fresh entry in the resolution cache. Going to
+  // yt-dlp on our 1 vCPU droplet takes 13-14 s end to end (proxy
+  // round-trips + deno JS-challenge solver); a hit here is sub-ms.
+  // Disabled for non-YouTube hosts where we can't extract a stable
+  // video id (key would just be the raw URL, which differs for every
+  // spelling of the same source).
+  if (videoId) {
+    const cached = getCachedStream(videoId, type);
+    if (cached) {
+      recordOutcome(true, { cacheHit: true });
+      return cached as WorkerStreamResult;
+    }
+
+    // Fast path 2 — another request is already resolving the same
+    // (video, type). Await its promise instead of forking a second
+    // yt-dlp subprocess and racing for the same answer.
+    const pending = getInflightStream(videoId, type);
+    if (pending) {
+      try {
+        const result = (await pending) as WorkerStreamResult;
+        recordOutcome(true, { cacheHit: true });
+        return result;
+      } catch (error) {
+        recordOutcome(false, {
+          cacheHit: true,
+          error:
+            error instanceof Error ? error.message : "inflight-rejected",
+        });
+        throw error;
+      }
+    }
+  }
+
+  // Slow path — run yt-dlp. Wrap the heavy work in a promise we can
+  // also register in the inflight map so concurrent callers dedup.
+  const work = doResolveStreamUrl(normalizedUrl, type, sampleHost);
+  if (videoId) {
+    trackInflightStream(videoId, type, work);
+  }
+
+  try {
+    const result = await work;
+    if (videoId) {
+      setCachedStream(videoId, type, result as unknown as Record<string, unknown> & {
+        url: string;
+        expiresAt?: number;
+      });
+    }
+    recordOutcome(true, { cacheHit: false });
+    return result;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "yt-dlp-fail";
+    recordOutcome(false, { cacheHit: false, error: message });
+    throw error;
+  }
+}
+
+/**
+ * The actual yt-dlp invocation, factored out so getStreamUrl can
+ * front it with the cache + inflight dedup wrapper. Throws on
+ * failure; the wrapper translates that into a metric sample plus
+ * a rethrow to the route handler.
+ */
+async function doResolveStreamUrl(
+  normalizedUrl: string,
+  type: "audio" | "video",
+  _sampleHost: string,
+): Promise<WorkerStreamResult> {
+  const useProxy = shouldUseProxyForUrl(normalizedUrl);
 
   // Override the default player_client list. Use a broader set than just
   // ios/tv:
@@ -636,15 +720,13 @@ export async function getStreamUrl(
     // failure: this video doesn't expose a muxed HLS variant via
     // ios/tv/mweb/android. Map it to a friendly hint the PWA can
     // render verbatim — much better UX than dumping yt-dlp's argv at
-    // the user.
+    // the user. The outer getStreamUrl wrapper records the sample.
     if (/requested format is not available/i.test(cleaned)) {
-      recordOutcome(false, "format-not-available");
       throw new Error(
         "No playable single-stream format is available for this video.",
       );
     }
 
-    recordOutcome(false, cleaned || "yt-dlp-fail");
     throw new Error(cleaned || "yt-dlp failed to resolve a stream URL.");
   }
 
@@ -667,7 +749,6 @@ export async function getStreamUrl(
       : info.requested_formats?.[0]?.url;
 
   if (!directUrl) {
-    recordOutcome(false, "no-direct-url");
     throw new Error(
       "yt-dlp returned no playable single-stream URL for this video.",
     );
@@ -701,8 +782,6 @@ export async function getStreamUrl(
     );
     protocol = matching?.protocol;
   }
-
-  recordOutcome(true);
 
   return {
     url: directUrl,

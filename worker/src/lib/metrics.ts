@@ -12,6 +12,14 @@ export type StreamSample = {
   type: "audio" | "video";
   host: string;
   ok: boolean;
+  /**
+   * True when this sample was served from the in-memory resolution
+   * cache instead of running yt-dlp. cache hits should be ~ms,
+   * misses ~13-14 s on our droplet. Tracked separately in /diag's
+   * summary so you can tell at a glance whether the cache is doing
+   * its job for the active traffic.
+   */
+  cacheHit?: boolean;
   /** Short error tag when ok=false; sanitized + capped to 120 chars. */
   error?: string;
 };
