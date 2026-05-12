@@ -30,7 +30,38 @@ const nextConfig: NextConfig = {
         // WebView resolve nested routes to their index.html.
         trailingSlash: true,
       }
-    : {}),
+    : {
+        /**
+         * Force a single canonical origin on Vercel. Without this rule,
+         * https://pepinho.lol and https://www.pepinho.lol both serve
+         * the full app — and because OPFS, localStorage, IndexedDB and
+         * `navigator.storage.persist()` grants are all scoped to the
+         * exact origin, anyone who installs the PWA from one host and
+         * later visits the other gets a blank library: their files
+         * still exist, but they're locked away on the other origin.
+         *
+         * 308 Permanent Redirect (not 301) so non-GET requests preserve
+         * their method (`POST /jobs` etc. survives the redirect intact
+         * even if a client somehow lands on www first).
+         *
+         * Caveat for already-installed PWAs at www: this redirect
+         * pushes them out of standalone-app scope on every relaunch
+         * (iOS opens the redirected URL in Safari instead of the PWA
+         * shell). Those installs were already broken — their data
+         * lives on the wrong origin and the user reported them empty.
+         * Reinstalling at the canonical host fixes them permanently.
+         */
+        async redirects() {
+          return [
+            {
+              source: "/:path*",
+              has: [{ type: "host", value: "www.pepinho.lol" }],
+              destination: "https://pepinho.lol/:path*",
+              permanent: true,
+            },
+          ];
+        },
+      }),
 };
 
 export default nextConfig;

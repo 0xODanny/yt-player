@@ -11,6 +11,7 @@ import cors from "cors";
 import express from "express";
 
 import { startDownloadCleanupLoop } from "./lib/storage";
+import { diagRouter } from "./routes/diag";
 import { filesRouter } from "./routes/files";
 import { healthRouter } from "./routes/health";
 import { jobsRouter } from "./routes/jobs";
@@ -80,6 +81,7 @@ app.use((req, res, next) => {
 });
 
 app.use("/health", healthRouter);
+app.use("/diag", diagRouter);
 app.use("/files", filesRouter);
 app.use("/jobs", jobsRouter);
 app.use("/search", searchRouter);

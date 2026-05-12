@@ -23,6 +23,12 @@ import {
   type StorageEstimate,
 } from "@/lib/library";
 import { shareBlobNative } from "@/lib/nativeShare";
+import {
+  canonicalUrlForCurrentPage,
+  CANONICAL_ORIGIN,
+  detectOriginStatus,
+  type OriginStatus,
+} from "@/lib/origin";
 import { isAndroidNative } from "@/lib/platform";
 import { useSettings } from "@/lib/settings";
 
@@ -43,6 +49,15 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
   const [busy, setBusy] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  // Origin-mismatch detection is window-dependent and must run after
+  // hydration so React doesn't see a server-vs-client mismatch on the
+  // banner element. Default to "canonical" until the effect fires.
+  const [originStatus, setOriginStatus] = useState<OriginStatus>({
+    kind: "canonical",
+  });
+  useEffect(() => {
+    setOriginStatus(detectOriginStatus());
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!supported) {
@@ -303,6 +318,33 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
               : totalUsed}
           </span>
         </div>
+
+        {originStatus.kind === "mismatch" ? (
+          <div className="origin-warning" role="alert">
+            <p>
+              You&apos;re on <code>{originStatus.currentHost}</code>, but
+              the canonical Pepinho Player address is{" "}
+              <code>pepinho.lol</code> (no <code>www.</code>). Each host
+              has its own private library — files saved on one
+              <strong> can&apos;t </strong>be seen from the other.
+            </p>
+            <p className="origin-warning-actions">
+              <a
+                href={canonicalUrlForCurrentPage()}
+                rel="noopener"
+                className="origin-warning-cta"
+              >
+                Switch to {CANONICAL_ORIGIN.replace(/^https?:\/\//, "")}
+              </a>
+            </p>
+            <p className="origin-warning-hint">
+              If your old library was on this host, use{" "}
+              <strong>Export library</strong> below to back it up first,
+              then reinstall on the canonical host and{" "}
+              <strong>Import</strong>.
+            </p>
+          </div>
+        ) : null}
 
         {usedPercent !== null ? (
           <div className="storage-meter" aria-hidden>

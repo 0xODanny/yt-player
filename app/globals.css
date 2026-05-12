@@ -801,6 +801,51 @@ code {
   color: var(--accent-strong);
 }
 
+.origin-warning {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  background: rgba(196, 76, 76, 0.18);
+  border: 1px solid rgba(196, 76, 76, 0.55);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.origin-warning p {
+  margin: 0;
+}
+
+.origin-warning p + p {
+  margin-top: 8px;
+}
+
+.origin-warning code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+}
+
+.origin-warning-cta {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--accent-strong);
+  color: #fff;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.origin-warning-cta:hover {
+  filter: brightness(0.95);
+}
+
+.origin-warning-hint {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
 .folder-bar {
   display: flex;
   align-items: center;

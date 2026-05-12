@@ -4,6 +4,12 @@ import { open, readdir, unlink } from "fs/promises";
 import path from "path";
 import { promisify } from "util";
 
+import {
+  parseYtDlpSpeedMiBps,
+  recordJobSample,
+  recordStreamSample,
+  safeHostOf,
+} from "./metrics";
 import { cleanupExpiredDownloads, DOWNLOADS_DIR, ensureDownloadsDir } from "./storage";
 import type {
   JobCreateResponse,
@@ -539,8 +545,23 @@ export async function getStreamUrl(
   rawUrl: string,
   type: "audio" | "video",
 ): Promise<WorkerStreamResult> {
+  const startedAt = Date.now();
   const normalizedUrl = normalizeMediaSourceUrl(rawUrl);
   const useProxy = shouldUseProxyForUrl(normalizedUrl);
+  // Wrap the whole resolution so /diag sees both happy-path latency
+  // (slow yt-dlp / proxy / cookie path) and error rates without each
+  // call site having to remember to record. The samples ring is
+  // capped at 30 entries so even a hot loop can't blow memory.
+  const recordOutcome = (ok: boolean, error?: string) => {
+    recordStreamSample({
+      at: startedAt,
+      elapsedMs: Date.now() - startedAt,
+      type,
+      host: safeHostOf(normalizedUrl),
+      ok,
+      error: error ? sanitizeErrorMessage(error).slice(0, 120) : undefined,
+    });
+  };
 
   // Override the default player_client list. Use a broader set than just
   // ios/tv:
@@ -617,11 +638,13 @@ export async function getStreamUrl(
     // render verbatim — much better UX than dumping yt-dlp's argv at
     // the user.
     if (/requested format is not available/i.test(cleaned)) {
+      recordOutcome(false, "format-not-available");
       throw new Error(
         "No playable single-stream format is available for this video.",
       );
     }
 
+    recordOutcome(false, cleaned || "yt-dlp-fail");
     throw new Error(cleaned || "yt-dlp failed to resolve a stream URL.");
   }
 
@@ -644,6 +667,7 @@ export async function getStreamUrl(
       : info.requested_formats?.[0]?.url;
 
   if (!directUrl) {
+    recordOutcome(false, "no-direct-url");
     throw new Error(
       "yt-dlp returned no playable single-stream URL for this video.",
     );
@@ -677,6 +701,8 @@ export async function getStreamUrl(
     );
     protocol = matching?.protocol;
   }
+
+  recordOutcome(true);
 
   return {
     url: directUrl,
@@ -991,6 +1017,9 @@ function buildYtDlpEnv(useProxy: boolean): NodeJS.ProcessEnv {
 }
 
 async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: JobPayload) {
+  const startedAt = Date.now();
+  let peakMiBps = 0;
+  const sampleHost = safeHostOf(normalizedUrl);
   // We let yt-dlp pick the final extension via `%(ext)s` so audio extraction
   // (mp3) and merged video (mp4) both end up with the right filename.
   const safeJobId = jobId.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -1067,6 +1096,16 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
 
     const progress = parseYtDlpProgress(trimmed);
     if (progress !== null) {
+      // Record the highest speed yt-dlp reported during the run so
+      // /diag can show "the proxy / CDN sustained N MiB/s for this
+      // download" — that's the single number that tells you whether
+      // slowness is upstream (proxy / yt-dlp) or downstream (phone
+      // pulling from the worker afterward).
+      const speed = parseYtDlpSpeedMiBps(trimmed);
+      if (speed !== null && speed > peakMiBps) {
+        peakMiBps = speed;
+      }
+
       updateJob(jobId, {
         status: "processing",
         progress: clampProgress(Math.min(99, progress)),
@@ -1133,6 +1172,16 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
     const currentAfterClose = jobStore.get(jobId);
     if (currentAfterClose?.cancelled) {
       console.log(`[job ${jobId}] terminated by cancellation`);
+      recordJobSample({
+        at: startedAt,
+        finishedAt: Date.now(),
+        elapsedMs: Date.now() - startedAt,
+        format: String(payload.format),
+        quality: String(payload.quality),
+        host: sampleHost,
+        status: "cancelled",
+        peakMiBps: peakMiBps || undefined,
+      });
       return;
     }
 
@@ -1142,6 +1191,17 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
         status: "failed",
         progress: 0,
         message: reason ?? "yt-dlp failed to download this media.",
+      });
+      recordJobSample({
+        at: startedAt,
+        finishedAt: Date.now(),
+        elapsedMs: Date.now() - startedAt,
+        format: String(payload.format),
+        quality: String(payload.quality),
+        host: sampleHost,
+        status: "failed",
+        peakMiBps: peakMiBps || undefined,
+        error: reason ? reason.slice(0, 120) : `exit-${code}`,
       });
       return;
     }
@@ -1155,7 +1215,30 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
           progress: 0,
           message: "Download finished but the output file is missing.",
         });
+        recordJobSample({
+          at: startedAt,
+          finishedAt: Date.now(),
+          elapsedMs: Date.now() - startedAt,
+          format: String(payload.format),
+          quality: String(payload.quality),
+          host: sampleHost,
+          status: "failed",
+          peakMiBps: peakMiBps || undefined,
+          error: "missing-output",
+        });
         return;
+      }
+
+      // Best-effort file-size lookup so /diag can show MiB-per-second
+      // sustained throughput, not just the peak instant speed.
+      let fileSize: number | undefined;
+      try {
+        const stats = await import("fs/promises").then((m) =>
+          m.stat(path.join(DOWNLOADS_DIR, filename)),
+        );
+        fileSize = stats.size;
+      } catch {
+        // ignore — stat failure isn't worth failing the job over
       }
 
       updateJob(jobId, {
@@ -1164,11 +1247,33 @@ async function runYtDlpDownload(jobId: string, normalizedUrl: string, payload: J
         message: "Worker job complete.",
         filename,
       });
+      recordJobSample({
+        at: startedAt,
+        finishedAt: Date.now(),
+        elapsedMs: Date.now() - startedAt,
+        format: String(payload.format),
+        quality: String(payload.quality),
+        host: sampleHost,
+        status: "complete",
+        peakMiBps: peakMiBps || undefined,
+        fileSize,
+      });
     } catch {
       updateJob(jobId, {
         status: "failed",
         progress: 0,
         message: "Download finished but the output file could not be located.",
+      });
+      recordJobSample({
+        at: startedAt,
+        finishedAt: Date.now(),
+        elapsedMs: Date.now() - startedAt,
+        format: String(payload.format),
+        quality: String(payload.quality),
+        host: sampleHost,
+        status: "failed",
+        peakMiBps: peakMiBps || undefined,
+        error: "locate-output-failed",
       });
     }
   });
