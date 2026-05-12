@@ -216,11 +216,11 @@ function friendlyJobMessage(
       lower.includes("login_required") ||
       lower.includes("login required")
     ) {
-      return "YouTube blocked this download from the server. This usually happens with music label uploads or age-restricted videos. Other YouTube videos should still work.";
+      return "YouTube isn't letting us play this one right now — usually music videos or age-restricted ones. Try another, most still work.";
     }
 
     if (lower.includes("video unavailable") || lower.includes("not available in your country")) {
-      return "This video isn't available to the worker (region locked or removed).";
+      return "This video isn't available (it may be region-locked or removed).";
     }
 
     if (lower.includes("private video")) {
@@ -228,17 +228,14 @@ function friendlyJobMessage(
     }
 
     if (lower.includes("requested format is not available")) {
-      return "The requested quality isn't offered for this video. Try a different quality.";
+      return "That quality isn't available for this video. Pick a different one.";
     }
   }
 
-  // Belt-and-suspenders: never render a message containing what looks
-  // like a `user:password@host` URL. The worker scrubs these before
-  // they leave the droplet, but older workers / unscrubbed code paths
-  // could still bubble one up, and we'd rather show a generic line
-  // than expose IPRoyal credentials in a screenshot.
+  // Never render anything that looks like a `user:password@host` URL
+  // even if upstream forgot to scrub it. Friendly fallback.
   if (/https?:\/\/[^/\s:@]+:[^/\s@]+@/i.test(rawMessage)) {
-    return "Worker error (details suppressed). Check pm2 logs on the droplet for the full message.";
+    return "Something went wrong on our side. Please try again.";
   }
 
   return rawMessage;
@@ -408,7 +405,7 @@ export default function HomePage() {
         });
         if (!response.ok) {
           const message = "error" in data ? data.error : undefined;
-          setError(message ?? "Unable to create job.");
+          setError(message ?? "Couldn't start the download.");
           return;
         }
         const createdJob = data as JobResponse;
@@ -422,7 +419,7 @@ export default function HomePage() {
           createdAt: Date.now(),
         });
       } catch {
-        setError("Network error while creating the job.");
+        setError("Couldn't connect. Check your internet and try again.");
       } finally {
         setIsSubmitting(false);
       }
@@ -450,7 +447,7 @@ export default function HomePage() {
         if (!response.ok) {
           if (!isCancelled) {
             const message = "error" in data ? data.error : undefined;
-            setError(message ?? "Unable to refresh job status.");
+            setError(message ?? "Couldn't refresh the download status.");
           }
           return;
         }
@@ -486,7 +483,7 @@ export default function HomePage() {
         }
       } catch {
         if (!isCancelled) {
-          setError("Network error while fetching job status.");
+          setError("Lost connection. Check your internet and try again.");
         }
       }
     }
@@ -572,11 +569,11 @@ export default function HomePage() {
     event.preventDefault();
 
     if (urlClassification.kind === "empty") {
-      setError("Enter a URL to start a download.");
+      setError("Paste a link to get started.");
       return;
     }
     if (urlClassification.kind === "invalid") {
-      setError("URL must be a valid http(s) link.");
+      setError("That doesn't look like a valid link.");
       return;
     }
 
@@ -591,7 +588,7 @@ export default function HomePage() {
 
       if (!response.ok) {
         const message = "error" in data ? data.error : undefined;
-        setError(message ?? "Unable to create job.");
+        setError(message ?? "Couldn't start the download.");
         return;
       }
 
@@ -614,7 +611,7 @@ export default function HomePage() {
         createdAt: Date.now(),
       });
     } catch {
-      setError("Network error while creating the job.");
+      setError("Couldn't connect. Check your internet and try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -677,7 +674,7 @@ export default function HomePage() {
         const { response, data } = await getJob(jobToReopen.id);
         if (!response.ok || "error" in data) {
           const message = "error" in data ? data.error : undefined;
-          setError(message ?? "Unable to load this past job. It may have expired.");
+          setError(message ?? "Couldn't reopen this download — it may have expired.");
           return;
         }
 
@@ -691,7 +688,7 @@ export default function HomePage() {
           downloadUrl: liveJob.downloadUrl,
         });
       } catch {
-        setError("Network error while reopening this job.");
+        setError("Couldn't connect. Check your internet and try again.");
       }
     },
     [],
@@ -709,21 +706,21 @@ export default function HomePage() {
       case "empty":
         return {
           tone: "muted",
-          text: "Paste a YouTube link or a direct media file URL (.mp3, .mp4, .m4a, .wav, .mov, .webm).",
+          text: "Drop in a YouTube link or a direct media file (.mp3, .mp4, .m4a, .wav, .mov, .webm).",
         };
       case "invalid":
-        return { tone: "warning", text: "That doesn't look like a valid http(s) URL." };
+        return { tone: "warning", text: "That doesn't look like a valid link." };
       case "youtube":
-        return { tone: "info", text: "YouTube source detected — yt-dlp will be used." };
+        return { tone: "info", text: "YouTube link detected." };
       case "direct":
         return {
           tone: "info",
-          text: "Direct media URL detected — output is forced to MP3 download.",
+          text: "Direct media file detected — output is set to MP3.",
         };
       default:
         return {
           tone: "info",
-          text: "Generic URL detected — yt-dlp will try to extract this source.",
+          text: "Looks like a media page — we'll try to extract the audio/video.",
         };
     }
   })();
@@ -737,8 +734,15 @@ export default function HomePage() {
     <main className="shell">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden>YT</span>
-          <span className="brand-text">YT Local Tool</span>
+          <img
+            className="brand-mark"
+            src="/icons/icon-192.png"
+            alt=""
+            aria-hidden
+            width={32}
+            height={32}
+          />
+          <span className="brand-text">Pepinho Player</span>
         </div>
         <div className="topbar-meta">
           <span className={`status-dot ${isOnline ? "online" : "offline"}`} aria-hidden />
@@ -746,8 +750,8 @@ export default function HomePage() {
           <button
             type="button"
             className="topbar-paste"
-            aria-label="Paste link from clipboard and download"
-            title="Paste & download"
+            aria-label="Paste link and download"
+            title="Paste a link from your clipboard"
             onClick={() => void pasteFromClipboard(true)}
           >
             <svg
@@ -810,7 +814,7 @@ export default function HomePage() {
           className={`tab${tab === "downloader" ? " active" : ""}`}
           onClick={() => setTab("downloader")}
         >
-          Downloader
+          Download
         </button>
         <button
           type="button"
@@ -838,12 +842,12 @@ export default function HomePage() {
       <section className="panel">
         <form className="job-form" onSubmit={handleSubmit}>
           <label className="field">
-            <span>Video URL</span>
+            <span>Paste a link</span>
             <div className="input-with-clear">
               <input
                 type="url"
                 name="url"
-                placeholder="Paste a YouTube or direct media URL"
+                placeholder="YouTube link or direct media file"
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
                 aria-invalid={isInvalidUrl}
@@ -923,11 +927,8 @@ export default function HomePage() {
 
           <div className="actions">
             <button type="submit" disabled={submitDisabled}>
-              {isSubmitting ? "Queueing…" : "Start download"}
+              {isSubmitting ? "Starting…" : "Save to library"}
             </button>
-            <p className="helper-text">
-              Use only on content you own or that is in the public domain.
-            </p>
           </div>
         </form>
       </section>
@@ -936,13 +937,12 @@ export default function HomePage() {
         <section className="panel">
           <div className="section-heading">
             <h2>Download</h2>
-            {job ? <span className="job-id">Job {job.id.slice(-8)}</span> : null}
           </div>
 
           {error ? (
             <div className="status-card error">
               <div className="status-row">
-                <strong>Request failed</strong>
+                <strong>Couldn't start</strong>
               </div>
               <p>{error}</p>
             </div>
@@ -972,12 +972,12 @@ export default function HomePage() {
                     type="button"
                     className="cancel-button"
                     onClick={() => void handleCancelJob(job.id)}
-                    title="Abort this download — the file will not be added to your library"
+                    title="Stop this download — nothing is saved"
                   >
-                    ■ Stop download
+                    ■ Stop
                   </button>
                   <span className="muted-text">
-                    Aborts before the file is saved, so no data is wasted.
+                    Nothing is saved if you stop now.
                   </span>
                 </div>
               ) : null}
@@ -992,11 +992,11 @@ export default function HomePage() {
                     aria-live="polite"
                   >
                     {librarySaveStatus === "saving"
-                      ? "Saving to library…"
+                      ? "Saving…"
                       : librarySaveStatus === "saved"
-                        ? "Saved to library"
+                        ? "Saved"
                         : librarySaveStatus === "error"
-                          ? `Library save failed: ${librarySaveError ?? "unknown"}`
+                          ? `Couldn't save: ${librarySaveError ?? "please try again"}`
                           : ""}
                   </span>
                 </div>
@@ -1043,7 +1043,7 @@ export default function HomePage() {
       {recentJobs.length > 0 ? (
         <section className="panel recent-panel">
           <div className="section-heading">
-            <h2>Recent jobs</h2>
+            <h2>Recent downloads</h2>
             <button type="button" className="link-button" onClick={clearRecentJobs}>
               Clear
             </button>
@@ -1056,7 +1056,7 @@ export default function HomePage() {
                   type="button"
                   className="recent-row"
                   onClick={() => void reopenJob(entry)}
-                  title="Reload this job"
+                  title="Open this download again"
                 >
                   {entry.thumbnail ? (
                     <img className="recent-thumb" src={entry.thumbnail} alt="" />
@@ -1100,7 +1100,7 @@ export default function HomePage() {
                     type="button"
                     className="recent-remove"
                     onClick={() => removeRecentJob(entry.id)}
-                    aria-label="Remove from recent jobs"
+                    aria-label="Remove from recent downloads"
                     title="Remove"
                   >
                     ×
@@ -1115,9 +1115,19 @@ export default function HomePage() {
       ) : null}
 
       <footer className="footer">
-        <span>YT Local Tool</span>
-        <span>·</span>
-        <span>Worker uses yt-dlp + ffmpeg</span>
+        <p className="footer-disclaimer">
+          For personal use with content you own or that is in the
+          public domain. Pepinho Player is provided as-is, with no
+          warranties; the developer is not responsible for how it is
+          used.
+        </p>
+        <p className="footer-meta">
+          <a href="https://pepinho.lol" target="_blank" rel="noreferrer">
+            pepinho.lol
+          </a>
+          {" · "}
+          <span>2026</span>
+        </p>
       </footer>
     </main>
   );

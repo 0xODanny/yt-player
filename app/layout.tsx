@@ -5,13 +5,13 @@ import { ServiceWorkerRegistrar } from "./sw-register";
 import { ViewportLock } from "./viewport-lock";
 
 export const metadata: Metadata = {
-  title: "YT Local Tool",
-  description: "Local utility for downloading non-copyrighted YouTube and direct media URLs.",
+  title: "Pepinho Player",
+  description: "Ad-free music and video player with offline saves.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    title: "YT Local Tool",
-    statusBarStyle: "black-translucent",
+    title: "Pepinho Player",
+    statusBarStyle: "default",
   },
   icons: {
     icon: [
@@ -29,7 +29,7 @@ export const viewport: Viewport = {
   minimumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  themeColor: "#0a0f17",
+  themeColor: "#c2d884",
 };
 
 export default function RootLayout({

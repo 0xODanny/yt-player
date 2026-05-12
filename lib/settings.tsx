@@ -153,27 +153,27 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
   {
     type: "select",
     key: "searchPreset",
-    label: "Default action from search",
+    label: "When you tap a result",
     description:
-      "What happens when you tap a result. Stream plays the video directly (ad-free, your phone data). Download via worker uses yt-dlp through the IPRoyal residential proxy for full quality and saves to your library.",
+      "Streaming plays the video right away, ad-free. Saving keeps a copy in your library so you can play it offline.",
     section: "Search",
     options: [
-      { value: "stream-audio", label: "Stream audio (no save, ad-free)" },
-      { value: "stream-video", label: "Stream video (no save, ad-free)" },
-      { value: "mp3", label: "Download MP3 via worker (uses proxy data, ~5 MB)" },
-      { value: "video-144p", label: "Download 144p via worker (uses proxy data, ~12 MB)" },
-      { value: "video-240p", label: "Download 240p via worker (uses proxy data, ~25 MB)" },
-      { value: "video-360p", label: "Download 360p via worker (uses proxy data, ~50 MB)" },
-      { value: "video-720p", label: "Download 720p via worker (uses proxy data, ~80 MB)" },
-      { value: "video-1080p", label: "Download 1080p via worker (uses proxy data, ~150 MB)" },
+      { value: "stream-audio", label: "Play audio (ad-free)" },
+      { value: "stream-video", label: "Play video (ad-free)" },
+      { value: "mp3", label: "Save as MP3 (~5 MB)" },
+      { value: "video-144p", label: "Save 144p video (~12 MB)" },
+      { value: "video-240p", label: "Save 240p video (~25 MB)" },
+      { value: "video-360p", label: "Save 360p video (~50 MB)" },
+      { value: "video-720p", label: "Save 720p video (~80 MB)" },
+      { value: "video-1080p", label: "Save 1080p video (~150 MB)" },
       {
         value: "direct-audio",
-        label: "Direct audio save (Android app only, your phone data)",
+        label: "Quick audio save (uses your phone data)",
         androidNativeOnly: true,
       },
       {
         value: "direct-video",
-        label: "Direct 360p save (Android app only, your phone data)",
+        label: "Quick video save (uses your phone data)",
         androidNativeOnly: true,
       },
     ],
@@ -182,7 +182,7 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     key: "autoSaveLibrary",
     label: "Auto-save downloads to library",
     description:
-      "When a download finishes, automatically store the file in the in-app library so you can play it back without re-downloading.",
+      "When a download finishes, store the file in your library so you can play it again without re-downloading.",
     section: "Library",
   },
   {

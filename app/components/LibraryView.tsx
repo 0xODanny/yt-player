@@ -278,8 +278,8 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
           <h2>Library</h2>
         </div>
         <p className="muted-text">
-          This browser doesn&apos;t support in-app storage (OPFS). Try the latest Safari,
-          Chrome, Edge, or Samsung Internet.
+          This browser can&apos;t store files for offline playback. Try the
+          latest Safari, Chrome, Edge, or Samsung Internet.
         </p>
       </section>
     );
@@ -299,7 +299,7 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
           <h2>Library</h2>
           <span className="job-id">
             {totalQuota
-              ? `${totalUsed} / ${totalQuota}${storage?.persisted ? " · persisted" : ""}`
+              ? `${totalUsed} of ${totalQuota}`
               : totalUsed}
           </span>
         </div>
@@ -364,9 +364,9 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
 
         {items.length === 0 ? (
           <div className="empty-card">
-            <p>No items in this folder yet.</p>
+            <p>Nothing here yet.</p>
             <p className="muted-text">
-              Finished downloads automatically save here. Use Move to organize.
+              Save something from Search or Download and it&apos;ll show up here.
             </p>
           </div>
         ) : (
@@ -380,7 +380,7 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
                     className="library-row"
                     onClick={() => setPlayingItem(item)}
                     disabled={item.missing}
-                    title={item.missing ? "File missing — re-download to play" : "Play"}
+                    title={item.missing ? "File is missing — download again to play" : "Play"}
                   >
                     {item.thumbnail ? (
                       <img className="library-thumb" src={item.thumbnail} alt="" />
@@ -449,10 +449,10 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
 
         <div className="library-footer">
           <button type="button" className="link-button" onClick={() => void handleExportManifest()}>
-            Export manifest
+            Export library
           </button>
           <button type="button" className="link-button" onClick={handleImportClick}>
-            Import manifest
+            Import library
           </button>
           <input
             ref={importInputRef}

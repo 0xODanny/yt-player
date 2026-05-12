@@ -94,11 +94,11 @@ export async function fetchStreamSource(
   }
 
   if (!response.ok || !body) {
-    throw new Error(body?.error || `Stream lookup failed (${response.status})`);
+    throw new Error(body?.error || `Couldn't load this video (${response.status}).`);
   }
 
   if (typeof body.url !== "string" || body.url.length === 0) {
-    throw new Error("Worker returned no stream URL.");
+    throw new Error("Couldn't load this video. Please try another.");
   }
 
   return body;

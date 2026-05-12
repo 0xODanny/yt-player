@@ -13,7 +13,7 @@
     "cap:open:android": "cap open android",
     "build:android:release": "node scripts/build-capacitor.mjs && (cd android && ./gradlew assembleRelease)",
     "refresh:cookies": "./scripts/refresh-yt-cookies.sh",
-    "assets:generate": "capacitor-assets generate --android --iconBackgroundColor '#000000' --splashBackgroundColor '#000000' --iconBackgroundColorDark '#000000' --splashBackgroundColorDark '#000000'"
+    "assets:generate": "capacitor-assets generate --android --iconBackgroundColor '#c2d884' --splashBackgroundColor '#c2d884' --iconBackgroundColorDark '#c2d884' --splashBackgroundColorDark '#c2d884' && node scripts/build-pwa-icons.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^6.1.2",

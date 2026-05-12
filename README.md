@@ -1,6 +1,8 @@
-# YT Local Tool
+# Pepinho Player
 
 A Next.js App Router PWA paired with a small Express worker for downloading non-copyrighted YouTube videos and direct media URLs.
+
+> Internal codename: **yt-player**. The repo and code modules keep that name; user-facing strings all use **Pepinho Player**.
 
 The frontend submits jobs and polls progress. The worker runs `yt-dlp` (and `ffmpeg` for audio extraction / stream merging) to actually fetch the media, then serves the resulting file back through `/files/:id`.
 

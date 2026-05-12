@@ -14,7 +14,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
  */
 const config: CapacitorConfig = {
   appId: "lol.pepinho.ytplayer",
-  appName: "YT Player",
+  appName: "Pepinho Player",
   // Next.js writes the static export to ./out when output: 'export'
   // is on; scripts/build-capacitor.mjs runs the export build and
   // then `cap sync android` copies ./out → android/app/src/main/

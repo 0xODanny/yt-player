@@ -106,7 +106,7 @@ export async function searchVideos(
   }
 
   if (!response.ok) {
-    const message = body?.error || `Search failed (${response.status})`;
+    const message = body?.error || `Couldn't search (${response.status}).`;
     throw new Error(message);
   }
 

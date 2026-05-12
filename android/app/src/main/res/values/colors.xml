@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Theme colors referenced by android/app/src/main/res/values/styles.xml -->
-    <color name="colorPrimary">#000000</color>
-    <color name="colorPrimaryDark">#000000</color>
-    <color name="colorAccent">#FF0000</color>
+    <color name="colorPrimary">#629035</color>
+    <color name="colorPrimaryDark">#244800</color>
+    <color name="colorAccent">#629035</color>
 
-    <!-- Splash screen background. Matches the dark PWA chrome so there's
-         no white flash between OS splash and the WebView painting. -->
-    <color name="splashBackground">#000000</color>
+    <!-- Splash screen background matches the sage green from the
+         Pepinho logo so there's no color flash between the OS splash
+         and the WebView painting the app's sage background. -->
+    <color name="splashBackground">#c2d884</color>
 </resources>

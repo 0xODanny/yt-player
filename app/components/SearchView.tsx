@@ -197,13 +197,13 @@ function presetLabel(preset: SearchPreset): string {
     case "video-1080p":
       return "1080p video";
     case "stream-audio":
-      return "audio stream";
+      return "Play audio";
     case "stream-video":
-      return "video stream";
+      return "Play video";
     case "direct-audio":
-      return "direct audio save";
+      return "Quick audio save";
     case "direct-video":
-      return "direct video save";
+      return "Quick video save";
     case "mp3":
     default:
       return "MP3 audio";
@@ -395,8 +395,8 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
         }
         setSearchError(
           error instanceof Error
-            ? `Search failed: ${error.message}`
-            : "Search failed.",
+            ? `Couldn't search: ${error.message}`
+            : "Couldn't search. Try again in a moment.",
         );
         setResults([]);
       } finally {
@@ -441,7 +441,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
           const message = "error" in data ? data.error : undefined;
           setDownload((current) =>
             current && current.jobId === jobId
-              ? { ...current, status: "failed", message: message ?? "Worker error" }
+              ? { ...current, status: "failed", message: message ?? "Couldn't complete the download." }
               : current,
           );
           return;
@@ -503,8 +503,8 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
                       status: "failed",
                       message:
                         error instanceof Error
-                          ? `Save failed: ${error.message}`
-                          : "Save failed.",
+                          ? `Couldn't save: ${error.message}`
+                          : "Couldn't save the file.",
                     }
                   : current,
               );
@@ -576,7 +576,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
         videoId: opts.videoId,
         status: "queued",
         progress: 0,
-        message: "Resolving direct URL…",
+        message: "Getting ready…",
       });
 
       try {
@@ -592,7 +592,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
           videoId: opts.videoId,
           status: "processing",
           progress: 0,
-          message: "Downloading via phone data…",
+          message: "Downloading…",
         });
 
         const blob = await downloadToBlob(source.url, {
@@ -652,8 +652,8 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
           progress: 0,
           message:
             error instanceof Error
-              ? `Direct download failed: ${error.message}`
-              : "Direct download failed.",
+              ? `Couldn't download: ${error.message}`
+              : "Couldn't download. Try again in a moment.",
         });
       } finally {
         // Whether we succeeded, aborted, or failed, the in-flight
@@ -744,7 +744,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
             videoId: result.videoId,
             status: "streaming",
             progress: 0,
-            message: "Direct download requires the Android app. Streaming instead.",
+            message: "Quick save is only in the Android app. Playing instead.",
           });
           try {
             const source = await fetchStreamSource(url, streamType);
@@ -767,7 +767,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
               status: "failed",
               progress: 0,
               message:
-                error instanceof Error ? error.message : "Stream lookup failed.",
+                error instanceof Error ? error.message : "Couldn't load this video.",
             });
           }
           return;
@@ -817,7 +817,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
             videoId: result.videoId,
             status: "failed",
             progress: 0,
-            message: error instanceof Error ? error.message : "Stream lookup failed.",
+            message: error instanceof Error ? error.message : "Couldn't load this video.",
           });
         }
         return;
@@ -840,7 +840,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
             videoId: result.videoId,
             status: "failed",
             progress: 0,
-            message: message ?? "Worker rejected the job.",
+            message: message ?? "Couldn't start the download.",
           });
           return;
         }
@@ -871,13 +871,13 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
       lower.includes("sign in to confirm") ||
       lower.includes("login_required")
     ) {
-      return "YouTube blocked this download from the server. Try a different video, or set up a residential proxy / cookies.";
+      return "YouTube isn't letting us play this one right now. Try another video — most still work.";
     }
-    // Belt-and-suspenders: never render an error containing what
-    // looks like a `user:password@host` URL, even if a worker layer
-    // somehow missed sanitizing it. Replace with a generic message.
+    // Never render anything that looks like a `user:password@host`
+    // URL even if the server forgot to scrub it. Fall back to a
+    // friendly generic message instead.
     if (/https?:\/\/[^/\s:@]+:[^/\s@]+@/i.test(download.message)) {
-      return "Worker error (details suppressed). Check pm2 logs on the droplet for the full message.";
+      return "Something went wrong on our side. Please try again.";
     }
     return download.message;
   }, [download?.message]);
@@ -901,9 +901,8 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
             ) : null}
           </div>
           <p className="muted-text" style={{ marginTop: 0 }}>
-            These direct downloads were running last time the app was
-            closed. Retry to fetch them again from your phone&apos;s
-            data; dismiss to forget.
+            These downloads were still in progress when the app closed.
+            Tap Retry to try them again, or Dismiss to forget.
           </p>
           <ul className="orphan-list">
             {orphanedDownloads.map((orphan) => {
@@ -967,8 +966,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
 
       <section className="panel">
         <div className="section-heading">
-          <h2>Search YouTube</h2>
-          <span className="job-id">via Invidious</span>
+          <h2>Search</h2>
         </div>
 
         <form className="search-form" onSubmit={handleSubmit}>
@@ -1021,10 +1019,10 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
             </button>
             <p className="helper-text">
               {isStreamPreset(preset)
-                ? `Tap a result to ${presetLabel(preset)} (ad-free, uses your phone data).`
+                ? `Tap a result to play it ad-free.`
                 : isAndroidNativeOnlyPreset(preset)
-                  ? `Tap a result to ${presetLabel(preset)} via your phone's data (free, no proxy bytes). Locking the screen is fine; swiping the app away will interrupt — you'll get a Resume prompt on reopen.`
-                  : `Tap a result to download as ${presetLabel(preset)} via the worker (uses paid proxy data).`}
+                  ? `Tap a result to save it to your library. The download uses your phone's data. You can lock the screen — closing the app will pause it (you'll see a Resume prompt next time).`
+                  : `Tap a result to save it to your library as ${presetLabel(preset)}.`}
             </p>
           </div>
         </form>
@@ -1034,7 +1032,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
         <section className="panel">
           <div className="status-card error">
             <div className="status-row">
-              <strong>Search failed</strong>
+              <strong>Couldn't search</strong>
             </div>
             <p>{searchError}</p>
           </div>
@@ -1095,19 +1093,19 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
               const stateLabel =
                 isThis &&
                 (download?.status === "queued"
-                  ? "Queued"
+                  ? "Starting…"
                   : download?.status === "processing"
                     ? `Downloading ${progress}%`
                     : download?.status === "saving"
-                      ? "Saving to library"
+                      ? "Saving…"
                       : download?.status === "streaming"
-                        ? "Resolving stream…"
+                        ? "Loading…"
                         : download?.status === "complete"
-                          ? isStreamPreset(preset) ? "Streaming" : "Saved"
+                          ? isStreamPreset(preset) ? "Playing" : "Saved"
                           : download?.status === "failed"
                             ? "Failed"
                             : download?.status === "cancelled"
-                              ? "Cancelled"
+                              ? "Stopped"
                               : "");
               const canCancel =
                 isThis &&
@@ -1119,8 +1117,8 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
                       type="button"
                       className="search-cancel"
                       onClick={() => void handleCancelDownload()}
-                      aria-label="Stop download"
-                      title="Stop download (won't save to library)"
+                      aria-label="Stop"
+                      title="Stop — nothing is saved"
                     >
                       ■
                     </button>
@@ -1132,8 +1130,8 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
                     disabled={Boolean(otherActive) || isDownloading}
                     title={
                       otherActive
-                        ? "Wait for the current download to finish"
-                        : `Download as ${presetLabel(preset)}`
+                        ? "Wait for the current one to finish"
+                        : presetLabel(preset)
                     }
                   >
                     {thumb ? (

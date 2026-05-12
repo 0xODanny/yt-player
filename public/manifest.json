@@ -1,15 +1,15 @@
 {
-  "id": "yt-local-tool",
-  "name": "YT Local Tool",
-  "short_name": "YT Tool",
-  "description": "Local utility for downloading non-copyrighted YouTube and direct media URLs.",
+  "id": "pepinho-player",
+  "name": "Pepinho Player",
+  "short_name": "Pepinho",
+  "description": "Ad-free music and video player with offline saves.",
   "start_url": "/?utm_source=pwa",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0a0f17",
-  "theme_color": "#0a0f17",
-  "categories": ["utilities", "productivity"],
+  "background_color": "#c2d884",
+  "theme_color": "#c2d884",
+  "categories": ["entertainment", "music"],
   "icons": [
     {
       "src": "/icons/icon-192.png",

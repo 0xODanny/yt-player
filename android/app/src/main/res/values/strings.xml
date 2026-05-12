@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">YT Player</string>
-    <string name="title_activity_main">YT Player</string>
+    <string name="app_name">Pepinho Player</string>
+    <string name="title_activity_main">Pepinho Player</string>
     <string name="package_name">lol.pepinho.ytplayer</string>
     <string name="custom_url_scheme">lol.pepinho.ytplayer</string>
 </resources>

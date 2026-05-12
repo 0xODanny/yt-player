@@ -226,7 +226,7 @@ export async function downloadAndShare(
 
     await Share.share({
       title: options.filename,
-      text: "Saved from YT Player",
+      text: "Saved from Pepinho Player",
       url: uri.uri,
       dialogTitle: "Save downloaded file",
     });

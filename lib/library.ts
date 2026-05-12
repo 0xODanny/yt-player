@@ -85,7 +85,7 @@ export function isLibrarySupported(): boolean {
 
 async function getRoot(): Promise<FileSystemDirectoryHandle> {
   if (!isLibrarySupported()) {
-    throw new Error("This browser does not support OPFS / the in-app library.");
+    throw new Error("This browser can't store files for offline playback.");
   }
   return await navigator.storage.getDirectory();
 }
@@ -224,7 +224,7 @@ export type AddItemInput = {
 
 export async function addItem(input: AddItemInput): Promise<ManifestItem> {
   if (!isLibrarySupported()) {
-    throw new Error("Library is not supported in this browser.");
+    throw new Error("This browser can't store files for offline playback.");
   }
 
   const id = generateId();

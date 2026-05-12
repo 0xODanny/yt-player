@@ -190,8 +190,8 @@ export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerPr
         if (!url) {
           setError(
             item.missing
-              ? "This item was restored from a manifest and has no file yet. Re-download it to play."
-              : "Could not read the file from the library.",
+              ? "The file for this item is missing. Download it again to play."
+              : "Couldn't open this file. Please try again.",
           );
           return;
         }
@@ -200,7 +200,7 @@ export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerPr
       })
       .catch(() => {
         if (!cancelled) {
-          setError("Could not read the file from the library.");
+          setError("Couldn't open this file. Please try again.");
         }
       })
       .finally(() => {
@@ -258,7 +258,7 @@ export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerPr
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: playable.title || "Untitled",
-        artist: playable.author || "YT Local Tool",
+        artist: playable.author || "Pepinho Player",
         album: playable.format.toUpperCase(),
         artwork,
       });
