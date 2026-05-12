@@ -32,4 +32,12 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Keeps the CPU awake while a foreground media service is running so
+         background audio playback survives screen-off / Doze. Required by
+         @jofr/capacitor-media-session's MediaSessionService. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Android 14 (API 34) requires this typed foreground service
+         permission for any service declared with foregroundServiceType
+         "mediaPlayback". -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 </manifest>

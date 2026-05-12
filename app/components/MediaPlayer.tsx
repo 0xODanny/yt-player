@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { getItemObjectUrl, type ManifestItem } from "@/lib/library";
 import { useSettings } from "@/lib/settings";
 import { type StreamSource } from "@/lib/stream";
+import { MediaSession } from "@jofr/capacitor-media-session";
 
 /**
  * Either a saved library item (plays from OPFS via a blob URL) OR a live
@@ -232,14 +233,14 @@ export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerPr
 
   // Wire the Media Session API so the lock screen / Control Center /
   // Bluetooth headphones / car play surfaces show now-playing info and
-  // accept playback controls. This is what makes "screen off in the gym"
-  // actually work — without it, even an <audio> element that keeps
-  // playing through screen-lock has no UI for the user to pause/skip.
+  // accept playback controls. This is also what makes "screen off in
+  // the gym" actually work — on Android the @jofr/capacitor-media-session
+  // plugin starts a foreground service when there's an active media
+  // session, which prevents the WebView from being killed during long
+  // background playback. On Web and iOS the plugin transparently
+  // delegates to the standard navigator.mediaSession Web API.
   useEffect(() => {
     if (!playable || !objectUrl) {
-      return;
-    }
-    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
       return;
     }
 
@@ -248,38 +249,42 @@ export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerPr
           {
             src: playable.thumbnail,
             sizes: "512x512",
-            // Most YouTube thumbnails are jpg; the browser is forgiving
-            // about the declared type for artwork.
+            // Most YouTube thumbnails are jpg; the OS is forgiving about
+            // the declared type for artwork.
             type: "image/jpeg",
           },
         ]
       : [];
 
-    try {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: playable.title || "Untitled",
-        artist: playable.author || "Pepinho Player",
-        album: playable.format.toUpperCase(),
-        artwork,
-      });
-    } catch {
-      // Older browsers may throw on MediaMetadata.
-    }
+    void MediaSession.setMetadata({
+      title: playable.title || "Untitled",
+      artist: playable.author || "Pepinho Player",
+      album: playable.format.toUpperCase(),
+      artwork,
+    }).catch(() => {
+      // Older browsers may reject — ignore.
+    });
 
     const el = mediaRef.current;
     if (!el) {
       return;
     }
 
+    type MediaAction =
+      | "play"
+      | "pause"
+      | "seekbackward"
+      | "seekforward"
+      | "seekto"
+      | "stop";
+
     const safeSet = (
-      action: MediaSessionAction,
-      handler: MediaSessionActionHandler | null,
+      action: MediaAction,
+      handler: ((details: { seekTime?: number | null; seekOffset?: number | null }) => void) | null,
     ) => {
-      try {
-        navigator.mediaSession.setActionHandler(action, handler);
-      } catch {
+      void MediaSession.setActionHandler({ action }, handler).catch(() => {
         // Some actions (e.g. seekto) aren't supported on every platform.
-      }
+      });
     };
 
     safeSet("play", () => {
@@ -308,47 +313,206 @@ export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerPr
 
     return () => {
       // Clear handlers when this player instance goes away so a stale
-      // closure doesn't fight whatever opens next.
-      try {
-        navigator.mediaSession.metadata = null;
-        safeSet("play", null);
-        safeSet("pause", null);
-        safeSet("seekbackward", null);
-        safeSet("seekforward", null);
-        safeSet("seekto", null);
-        safeSet("stop", null);
-      } catch {
-        // best effort
-      }
+      // closure doesn't fight whatever opens next, and mark playback
+      // state as "none" so the foreground service can shut down.
+      safeSet("play", null);
+      safeSet("pause", null);
+      safeSet("seekbackward", null);
+      safeSet("seekforward", null);
+      safeSet("seekto", null);
+      safeSet("stop", null);
+      void MediaSession.setPlaybackState({ playbackState: "none" }).catch(() => {
+        // ignore
+      });
     };
   }, [playable, objectUrl, useAudioElement]);
 
-  // Reflect playback state to the OS (so the lock-screen widget shows the
-  // right play/pause icon).
+  // Reflect playback state to the OS (so the lock-screen widget shows
+  // the right play/pause icon, and so the Android foreground service
+  // starts/stops appropriately).
   useEffect(() => {
     const el = mediaRef.current;
-    if (!el || typeof navigator === "undefined" || !("mediaSession" in navigator)) {
+    if (!el) {
       return;
     }
     const onPlay = () => {
-      try {
-        navigator.mediaSession.playbackState = "playing";
-      } catch {
+      void MediaSession.setPlaybackState({ playbackState: "playing" }).catch(() => {
         // ignore
-      }
+      });
     };
     const onPause = () => {
-      try {
-        navigator.mediaSession.playbackState = "paused";
-      } catch {
+      void MediaSession.setPlaybackState({ playbackState: "paused" }).catch(() => {
         // ignore
-      }
+      });
     };
     el.addEventListener("play", onPlay);
     el.addEventListener("pause", onPause);
     return () => {
       el.removeEventListener("play", onPlay);
       el.removeEventListener("pause", onPause);
+    };
+  }, [objectUrl, useAudioElement]);
+
+  // Persist playback position to localStorage every few seconds so a
+  // crash, OOM kill, or app re-launch returns the user to roughly where
+  // they were — within a 5-second window. The position is keyed on
+  // playable.id so library items and streams have stable, non-colliding
+  // entries. We clear the entry on natural "ended" so finished tracks
+  // don't seek the user 30 seconds before the end next time they tap
+  // play.
+  useEffect(() => {
+    if (!playable || !objectUrl) {
+      return;
+    }
+    const el = mediaRef.current;
+    if (!el) {
+      return;
+    }
+    const storageKey = `yt-local-tool:position:${playable.id}`;
+
+    const writePosition = () => {
+      const t = el.currentTime;
+      if (Number.isFinite(t) && t > 1) {
+        try {
+          window.localStorage.setItem(storageKey, String(t));
+        } catch {
+          // quota / private mode — ignore
+        }
+      }
+    };
+
+    let timer: number | null = null;
+    const onPlay = () => {
+      if (timer != null) return;
+      timer = window.setInterval(writePosition, 5000);
+    };
+    const onPauseOrHide = () => {
+      writePosition();
+      if (timer != null) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onEnded = () => {
+      onPauseOrHide();
+      try {
+        window.localStorage.removeItem(storageKey);
+      } catch {
+        // ignore
+      }
+    };
+
+    const restorePosition = () => {
+      try {
+        const saved = window.localStorage.getItem(storageKey);
+        if (!saved) return;
+        const seconds = Number(saved);
+        if (!Number.isFinite(seconds) || seconds <= 1) return;
+        const duration = el.duration;
+        const target =
+          Number.isFinite(duration) && duration > 0
+            ? Math.min(seconds, duration - 1)
+            : seconds;
+        if (target > 1) {
+          el.currentTime = target;
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    if (el.readyState >= 1) {
+      restorePosition();
+    } else {
+      el.addEventListener("loadedmetadata", restorePosition, { once: true });
+    }
+
+    el.addEventListener("play", onPlay);
+    el.addEventListener("pause", onPauseOrHide);
+    el.addEventListener("ended", onEnded);
+    window.addEventListener("pagehide", onPauseOrHide);
+
+    return () => {
+      onPauseOrHide();
+      el.removeEventListener("loadedmetadata", restorePosition);
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onPauseOrHide);
+      el.removeEventListener("ended", onEnded);
+      window.removeEventListener("pagehide", onPauseOrHide);
+    };
+  }, [playable, objectUrl, useAudioElement]);
+
+  // Request a screen Wake Lock while audio is playing. The Wake Lock
+  // API is a "screen" lock in the browser, which on Android also keeps
+  // the JS process and audio pipeline less likely to be aggressively
+  // suspended by Doze. iOS Safari doesn't expose Wake Lock at all (the
+  // page is silently allowed to keep audio going), so the try/catch
+  // around the request keeps us crash-free everywhere. The lock is
+  // automatically released when the page becomes hidden, so we
+  // re-acquire on visibilitychange when the page comes back and audio
+  // is still playing.
+  useEffect(() => {
+    if (typeof navigator === "undefined") {
+      return;
+    }
+    const nav = navigator as Navigator & {
+      wakeLock?: {
+        request: (type: "screen") => Promise<WakeLockSentinel>;
+      };
+    };
+    if (!nav.wakeLock) {
+      return;
+    }
+    const el = mediaRef.current;
+    if (!el) {
+      return;
+    }
+
+    let sentinel: WakeLockSentinel | null = null;
+
+    const acquire = async () => {
+      if (sentinel) return;
+      try {
+        sentinel = await nav.wakeLock!.request("screen");
+        sentinel.addEventListener("release", () => {
+          sentinel = null;
+        });
+      } catch {
+        // Permission denied / not allowed — silently skip; audio still works.
+      }
+    };
+    const release = () => {
+      if (!sentinel) return;
+      const s = sentinel;
+      sentinel = null;
+      void s.release().catch(() => {
+        // ignore
+      });
+    };
+
+    const onPlay = () => {
+      void acquire();
+    };
+    const onPause = () => {
+      release();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && !el.paused) {
+        void acquire();
+      }
+    };
+
+    el.addEventListener("play", onPlay);
+    el.addEventListener("pause", onPause);
+    el.addEventListener("ended", onPause);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onPause);
+      el.removeEventListener("ended", onPause);
+      document.removeEventListener("visibilitychange", onVisibility);
+      release();
     };
   }, [objectUrl, useAudioElement]);
 
