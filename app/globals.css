@@ -786,6 +786,21 @@ code {
   transition: width 220ms ease;
 }
 
+.storage-warning {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: rgba(212, 154, 46, 0.16);
+  border: 1px solid rgba(212, 154, 46, 0.4);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.storage-warning strong {
+  color: var(--accent-strong);
+}
+
 .folder-bar {
   display: flex;
   align-items: center;

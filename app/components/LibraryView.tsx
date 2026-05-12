@@ -313,6 +313,16 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
           </div>
         ) : null}
 
+        {storage && !storage.persisted ? (
+          <p className="storage-warning" role="status">
+            Your library isn&apos;t pinned to this device yet — Safari may
+            clear it after about a week of disuse. To fix: tap the Share
+            icon in Safari, then{" "}
+            <strong>&ldquo;Add to Home Screen&rdquo;</strong>, then open the
+            app from that home-screen icon.
+          </p>
+        ) : null}
+
         <div className="folder-bar">
           <div className="folder-list" role="tablist" aria-label="Library folders">
             {folders.map((folder) => {

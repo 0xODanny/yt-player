@@ -227,6 +227,12 @@ export async function addItem(input: AddItemInput): Promise<ManifestItem> {
     throw new Error("This browser can't store files for offline playback.");
   }
 
+  // Triggered from a download-button click handler, so this is the
+  // user-gesture context iOS Safari needs to actually grant
+  // persistence. Don't await on the network path — fire-and-forget
+  // so a slow persist() call doesn't delay the user-visible save.
+  void requestPersistentStorage();
+
   const id = generateId();
   const fileName = `${id}.${fileExtForFormat(input.format)}`;
 
@@ -247,6 +253,87 @@ export async function addItem(input: AddItemInput): Promise<ManifestItem> {
     type: inferTypeFromFormat(input.format),
     duration: input.duration ?? null,
     fileSize: input.blob.size,
+    thumbnail: input.thumbnail,
+    author: input.author,
+    createdAt: Date.now(),
+  };
+
+  const manifest = await loadManifest();
+  manifest.items = [item, ...manifest.items];
+  await saveManifest(manifest);
+
+  return item;
+}
+
+export type StreamingAddItemInput = Omit<AddItemInput, "blob"> & {
+  /**
+   * Caller-provided async function that writes the file's bytes into
+   * the freshly opened OPFS WritableStream and returns the byte count
+   * actually written. The library code never touches the bytes — this
+   * lets callers (e.g. nativeDownload.ts) pipe a fetch ReadableStream
+   * directly to OPFS without materializing a 150 MB Blob in JS memory,
+   * which was OOM-killing the WebView for video downloads on Android.
+   */
+  writeToStream: (writable: WritableStream<Uint8Array>) => Promise<{ size: number }>;
+};
+
+/**
+ * Streaming counterpart of addItem(). The blob never exists in JS —
+ * the caller is handed a WritableStream backed by the OPFS file and
+ * is responsible for writing bytes into it (pipe / write-chunk).
+ * Memory stays at a single chunk's worth (~1 MB) regardless of file
+ * size, fixing the "downloads fail at 99 %" Android OOM crash for
+ * large videos.
+ */
+export async function addItemFromStream(
+  input: StreamingAddItemInput,
+): Promise<ManifestItem> {
+  if (!isLibrarySupported()) {
+    throw new Error("This browser can't store files for offline playback.");
+  }
+
+  // See note in addItem(): we re-request persistence here from the
+  // user-gesture click context so iOS Safari can actually grant it.
+  void requestPersistentStorage();
+
+  const id = generateId();
+  const fileName = `${id}.${fileExtForFormat(input.format)}`;
+
+  const filesDir = await getFilesDir(true);
+  const fileHandle = await filesDir.getFileHandle(fileName, { create: true });
+  const writable = await fileHandle.createWritable();
+
+  let size: number;
+  try {
+    const result = await input.writeToStream(writable);
+    size = result.size;
+  } catch (error) {
+    // Best-effort clean up the half-written OPFS file so we don't
+    // leave bytes haunting the library after a failure.
+    try {
+      await writable.close();
+    } catch {
+      // ignore
+    }
+    try {
+      await filesDir.removeEntry(fileName);
+    } catch {
+      // ignore
+    }
+    throw error;
+  }
+
+  const item: ManifestItem = {
+    id,
+    fileName,
+    folderId: input.folderId || DEFAULT_FOLDER_ID,
+    title: input.title || "Untitled",
+    sourceUrl: input.sourceUrl,
+    format: input.format,
+    quality: input.quality,
+    type: inferTypeFromFormat(input.format),
+    duration: input.duration ?? null,
+    fileSize: size,
     thumbnail: input.thumbnail,
     author: input.author,
     createdAt: Date.now(),
@@ -392,7 +479,16 @@ export async function getStorageEstimate(): Promise<StorageEstimate> {
   return { used, quota, persisted };
 }
 
+let persistAttemptInFlight: Promise<boolean> | null = null;
+let persistGranted = false;
+
 export async function requestPersistentStorage(): Promise<boolean> {
+  if (persistGranted) {
+    return true;
+  }
+  if (persistAttemptInFlight) {
+    return persistAttemptInFlight;
+  }
   if (
     typeof navigator === "undefined" ||
     !navigator.storage ||
@@ -400,11 +496,27 @@ export async function requestPersistentStorage(): Promise<boolean> {
   ) {
     return false;
   }
-  try {
-    return await navigator.storage.persist();
-  } catch {
-    return false;
-  }
+  persistAttemptInFlight = (async () => {
+    try {
+      // iOS Safari only grants persistent storage when the request
+      // happens in response to a user gesture (tap/click handler).
+      // Calling this from inside addItem() / addItemFromStream() —
+      // both reached through a download-button onClick — guarantees
+      // we're inside a gesture even on the second-and-later attempts.
+      const granted = await navigator.storage.persist();
+      persistGranted = granted;
+      return granted;
+    } catch {
+      return false;
+    } finally {
+      // Allow a retry next time if the first attempt didn't grant
+      // (e.g. mount-time call before any user interaction failed).
+      if (!persistGranted) {
+        persistAttemptInFlight = null;
+      }
+    }
+  })();
+  return persistAttemptInFlight;
 }
 
 export function formatFileSize(bytes: number): string {

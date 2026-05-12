@@ -257,6 +257,115 @@ function base64ToUint8Array(base64: string): Uint8Array {
   return bytes;
 }
 
+/**
+ * Streaming variant of downloadToBlob — avoids ever materializing the
+ * full file as a Blob / Uint8Array in JS memory. Used for the direct
+ * download path on Android, where a 150 MB 720p mp4 going through
+ * base64 + atob + Uint8Array allocates 500 MB+ briefly and Samsung's
+ * memory killer OOMs the WebView at the final step (visible to the
+ * user as "fails at 99 %, app closes").
+ *
+ * Mechanism:
+ *   1. Stage the bytes to Directory.Cache via Filesystem.downloadFile
+ *      (this part already streams to disk in native code).
+ *   2. Resolve a `capacitor://localhost/_capacitor_file_...` URL via
+ *      Capacitor.convertFileSrc — the WebView can fetch() this URL
+ *      and the network stack serves it from disk in chunks.
+ *   3. Pipe response.body (ReadableStream) → caller-supplied
+ *      WritableStream. Standard pipeTo() applies backpressure, so
+ *      peak memory is the chunk buffer (≈ 64 KB - 1 MB).
+ *   4. Best-effort delete of the native cache file once piped.
+ *
+ * Returns the byte count actually piped, which we use to fill in
+ * fileSize on the library manifest entry.
+ */
+export async function downloadStreamingToWritable(
+  url: string,
+  destination: WritableStream<Uint8Array>,
+  options: NativeDownloadOptions,
+): Promise<{ size: number }> {
+  ensureAndroidNative();
+
+  const dir = Directory.Cache;
+  const filename = `yt-tmp-${Date.now()}-${options.filename}`;
+
+  let removeListener: (() => void) | null = null;
+  if (options.onProgress) {
+    const handler: ProgressListener = (event) => {
+      if (event.url !== url) return;
+      options.onProgress?.({
+        loaded: event.bytes,
+        total: event.contentLength > 0 ? event.contentLength : null,
+      });
+    };
+    const sub = await Filesystem.addListener("progress", handler);
+    removeListener = () => {
+      void sub.remove();
+    };
+  }
+
+  let aborted = false;
+  const abortHandler = () => {
+    aborted = true;
+    removeListener?.();
+  };
+  options.signal?.addEventListener("abort", abortHandler);
+
+  try {
+    await Filesystem.downloadFile({
+      url,
+      path: filename,
+      directory: dir,
+      progress: true,
+    });
+
+    if (aborted) {
+      await Filesystem.deleteFile({ path: filename, directory: dir }).catch(
+        () => undefined,
+      );
+      throw new DOMException("Aborted", "AbortError");
+    }
+
+    // Capacitor.convertFileSrc turns a native file URI into a
+    // localhost https URL the WebView is allowed to fetch().
+    const { uri: nativeUri } = await Filesystem.getUri({
+      path: filename,
+      directory: dir,
+    });
+    const fetchUrl = Capacitor.convertFileSrc(nativeUri);
+
+    const response = await fetch(fetchUrl, { signal: options.signal });
+    if (!response.ok || !response.body) {
+      throw new Error(
+        `Failed to read staged file (HTTP ${response.status})`,
+      );
+    }
+
+    const contentLength = Number(response.headers.get("Content-Length") || 0);
+
+    // pipeTo closes the destination writable when source ends, so the
+    // caller doesn't need to close() it. Backpressure keeps memory
+    // bounded to one chunk at a time.
+    await response.body.pipeTo(destination, { signal: options.signal });
+
+    // Emit a final 100% tick so the UI doesn't get stuck at 99 (the
+    // native progress listener stops emitting once the cache write
+    // finishes; the pipe-to-OPFS phase is silent).
+    if (contentLength > 0) {
+      options.onProgress?.({ loaded: contentLength, total: contentLength });
+    }
+
+    await Filesystem.deleteFile({ path: filename, directory: dir }).catch(
+      () => undefined,
+    );
+
+    return { size: contentLength };
+  } finally {
+    removeListener?.();
+    options.signal?.removeEventListener("abort", abortHandler);
+  }
+}
+
 // Re-export so callers don't need a separate Capacitor import just to
 // detect the runtime; lib/platform.ts is the canonical source for
 // platform checks, but having this side-door here keeps imports tidy

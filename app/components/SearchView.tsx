@@ -17,8 +17,8 @@ import {
   takeOrphansAndPruneStale,
   type InflightDirectDownload,
 } from "@/lib/inflightDownloads";
-import { addItem, type ManifestItem } from "@/lib/library";
-import { downloadToBlob } from "@/lib/nativeDownload";
+import { addItem, addItemFromStream, type ManifestItem } from "@/lib/library";
+import { downloadStreamingToWritable } from "@/lib/nativeDownload";
 import { isAndroidNative } from "@/lib/platform";
 import {
   formatLength,
@@ -595,20 +595,31 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
           message: "Downloading…",
         });
 
-        const blob = await downloadToBlob(source.url, {
-          filename: `${opts.videoId}.${format === "mp3" ? "m4a" : "mp4"}`,
-          mimeHint: mime,
-          signal: controller.signal,
-          onProgress: ({ loaded, total }) => {
-            const pct = total
-              ? Math.max(2, Math.min(99, Math.round((loaded / total) * 100)))
-              : Math.min(99, Math.round(loaded / (1024 * 1024)));
-            setDownload((current) =>
-              current && current.videoId === opts.videoId
-                ? { ...current, status: "processing", progress: pct }
-                : current,
-            );
-          },
+        const item = await addItemFromStream({
+          title: source.title || opts.title || "Untitled",
+          sourceUrl: url,
+          format,
+          quality:
+            opts.preset === "direct-audio" ? "audio (direct)" : "360p (direct)",
+          duration: source.duration ?? opts.durationSeconds ?? null,
+          thumbnail: source.thumbnail || opts.thumbnail || undefined,
+          author: source.author || opts.author,
+          writeToStream: (writable) =>
+            downloadStreamingToWritable(source.url, writable, {
+              filename: `${opts.videoId}.${format === "mp3" ? "m4a" : "mp4"}`,
+              mimeHint: mime,
+              signal: controller.signal,
+              onProgress: ({ loaded, total }) => {
+                const pct = total
+                  ? Math.max(2, Math.min(99, Math.round((loaded / total) * 100)))
+                  : Math.min(99, Math.round(loaded / (1024 * 1024)));
+                setDownload((current) =>
+                  current && current.videoId === opts.videoId
+                    ? { ...current, status: "processing", progress: pct }
+                    : current,
+                );
+              },
+            }),
         });
 
         if (controller.signal.aborted) {
@@ -620,18 +631,6 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
             ? { ...current, status: "saving", progress: 99 }
             : current,
         );
-
-        const item = await addItem({
-          blob,
-          title: source.title || opts.title || "Untitled",
-          sourceUrl: url,
-          format,
-          quality:
-            opts.preset === "direct-audio" ? "audio (direct)" : "360p (direct)",
-          duration: source.duration ?? opts.durationSeconds ?? null,
-          thumbnail: source.thumbnail || opts.thumbnail || undefined,
-          author: source.author || opts.author,
-        });
 
         setDownload({
           videoId: opts.videoId,
