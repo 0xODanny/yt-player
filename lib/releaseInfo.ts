@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.9";
+export const APP_RELEASE_VERSION = "1.1.10";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,15 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.10",
+    title: "May 2026",
+    items: [
+      "Play audio / Play video (no download): native browser controls hid the real video inside the control strip and broke time display on many phones. Streams now use our own scrubber and play/pause; audio-only streams use the audio player again.",
+      "Progress while buffering: the bar can use loaded bytes when duration is still unknown; a small buffering hint shows while data arrives.",
+      "Smoke: Search preset chips (Play audio, Play video, …) use dark text on light pills so they match the rest of the theme.",
+    ],
+  },
   {
     version: "1.1.9",
     title: "May 2026",
