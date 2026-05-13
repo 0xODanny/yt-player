@@ -35,6 +35,13 @@ import { useSettings } from "@/lib/settings";
 
 import { MediaPlayer } from "./MediaPlayer";
 
+/** Local date/time for export filenames (dd-mm-yyyy-hh-mm). */
+function pepinhoLibraryExportFilename(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `pepinho-player-${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()}-${p(d.getHours())}-${p(d.getMinutes())}.json`;
+}
+
 type LibraryViewProps = {
   reloadKey: number;
 };
@@ -282,7 +289,7 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
   const handleExportManifest = useCallback(async () => {
     const text = await exportManifest();
     const blob = new Blob([text], { type: "application/json" });
-    const filename = `library-manifest-${new Date().toISOString().slice(0, 10)}.json`;
+    const filename = pepinhoLibraryExportFilename();
 
     // Android WebView often ignores synthetic <a download> clicks for
     // blob: URLs — same reason as handleExportToDevice uses the share sheet.
