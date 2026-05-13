@@ -906,9 +906,9 @@ export default function HomePage() {
         />
       ) : null}
 
-      {tab === "library" ? (
+      <div hidden={tab !== "library"}>
         <LibraryView reloadKey={libraryReloadKey} />
-      ) : null}
+      </div>
 
       {tab === "downloader" ? (
         <>

@@ -31,9 +31,8 @@ import {
 } from "@/lib/origin";
 import { isAndroidNative, isNative } from "@/lib/platform";
 import { isStandaloneDisplayMode } from "@/lib/pwaInstall";
+import { usePlayback } from "@/lib/playback";
 import { useSettings } from "@/lib/settings";
-
-import { MediaPlayer } from "./MediaPlayer";
 
 /** Local date/time for export filenames (dd-mm-yyyy-hh-mm). */
 function pepinhoLibraryExportFilename(): string {
@@ -48,11 +47,11 @@ type LibraryViewProps = {
 
 export function LibraryView({ reloadKey }: LibraryViewProps) {
   const { settings } = useSettings();
+  const { playLibrary, stop, getActive, setLibraryEndedHandler } = usePlayback();
   const [supported] = useState(() => isLibrarySupported());
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [activeFolderId, setActiveFolderId] = useState<string>(DEFAULT_FOLDER_ID);
   const [storage, setStorage] = useState<StorageEstimate | null>(null);
-  const [playingItem, setPlayingItem] = useState<ManifestItem | null>(null);
   /** Per-folder playback: normal, loop entire folder order, or repeat current track. */
   const [folderPlayMode, setFolderPlayMode] = useState<
     "off" | "loop_folder" | "repeat_one"
@@ -110,16 +109,34 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
     [folderPlayMode, items.length],
   );
 
-  const handleLibraryPlaybackEnded = useCallback(() => {
-    if (folderPlayMode !== "loop_folder" || items.length <= 1 || !playingItem) {
-      return;
-    }
-    const idx = items.findIndex((i) => i.id === playingItem.id);
-    if (idx < 0) {
-      return;
-    }
-    setPlayingItem(items[(idx + 1) % items.length] ?? null);
-  }, [folderPlayMode, items, playingItem]);
+  const itemsRef = useRef(items);
+  const folderPlayModeRef = useRef(folderPlayMode);
+  itemsRef.current = items;
+  folderPlayModeRef.current = folderPlayMode;
+
+  useEffect(() => {
+    setLibraryEndedHandler(() => {
+      const mode = folderPlayModeRef.current;
+      const list = itemsRef.current;
+      if (mode !== "loop_folder" || list.length <= 1) {
+        return;
+      }
+      const active = getActive();
+      if (!active || active.kind !== "library") {
+        return;
+      }
+      const idx = list.findIndex((i) => i.id === active.item.id);
+      if (idx < 0) {
+        return;
+      }
+      const next = list[(idx + 1) % list.length];
+      if (!next) {
+        return;
+      }
+      playLibrary({ item: next, repeatOne: false });
+    });
+    return () => setLibraryEndedHandler(null);
+  }, [setLibraryEndedHandler, getActive, playLibrary]);
 
   const handleCreateFolder = useCallback(async () => {
     const name = window.prompt("Folder name");
@@ -238,12 +255,16 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
       setBusy(true);
       try {
         await removeItem(item.id);
+        const active = getActive();
+        if (active?.kind === "library" && active.item.id === item.id) {
+          stop();
+        }
         await refresh();
       } finally {
         setBusy(false);
       }
     },
-    [refresh, settings.confirmDelete],
+    [refresh, settings.confirmDelete, getActive, stop],
   );
 
   const handleExportToDevice = useCallback(async (item: ManifestItem) => {
@@ -524,7 +545,9 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
                   <button
                     type="button"
                     className="library-row"
-                    onClick={() => setPlayingItem(item)}
+                    onClick={() =>
+                      playLibrary({ item, repeatOne: repeatOneForPlayer })
+                    }
                     disabled={item.missing}
                     title={item.missing ? "File is missing — download again to play" : "Play"}
                   >
@@ -610,17 +633,6 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
         </div>
         {importError ? <p className="hint hint-warning">{importError}</p> : null}
       </section>
-
-      <MediaPlayer
-        item={playingItem}
-        repeatOne={repeatOneForPlayer}
-        onLibraryPlaybackEnded={
-          folderPlayMode === "loop_folder" && items.length > 1
-            ? handleLibraryPlaybackEnded
-            : undefined
-        }
-        onClose={() => setPlayingItem(null)}
-      />
 
       {movingItem ? (
         <div

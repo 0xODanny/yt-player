@@ -21,6 +21,7 @@ import {
 import { addItem, addItemFromStream, type ManifestItem } from "@/lib/library";
 import { downloadStreamingToWritable } from "@/lib/nativeDownload";
 import { isAndroidNative } from "@/lib/platform";
+import { usePlayback } from "@/lib/playback";
 import {
   formatLength,
   formatViewCount,
@@ -35,8 +36,6 @@ import {
   useSettings,
 } from "@/lib/settings";
 import { fetchStreamSource, type StreamSource } from "@/lib/stream";
-
-import { MediaPlayer } from "./MediaPlayer";
 
 /**
  * iOS PWAs get suspended (and frequently restarted from scratch) when the
@@ -246,6 +245,7 @@ const PRESET_OPTIONS: PresetOption[] = [
 
 export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProps) {
   const { settings, update } = useSettings();
+  const { playLibrary, playStream } = usePlayback();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -255,8 +255,6 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
   const [sessionSavedVideoIds, setSessionSavedVideoIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const [autoPlayItem, setAutoPlayItem] = useState<ManifestItem | null>(null);
-  const [autoPlayStream, setAutoPlayStream] = useState<StreamSource | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   // Resolve once on mount so the chip strip matches between SSR and
   // hydration. SSR always sees `false` (no Capacitor), so the
@@ -887,13 +885,15 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
           });
           try {
             const source = await fetchStreamSource(url, streamType);
-            setAutoPlayStream({
-              ...source,
-              title: source.title || result.title,
-              author: source.author || result.author,
-              thumbnail:
-                source.thumbnail ||
-                pickThumbnail(result.thumbnails, 480)?.url,
+            playStream({
+              stream: {
+                ...source,
+                title: source.title || result.title,
+                author: source.author || result.author,
+                thumbnail:
+                  source.thumbnail ||
+                  pickThumbnail(result.thumbnails, 480)?.url,
+              },
             });
             setDownload({
               videoId: result.videoId,
@@ -938,13 +938,15 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
           const source = await fetchStreamSource(url, streamType);
           // Augment with the search result's metadata so the player has
           // a thumbnail / author even if yt-dlp's --get-url skipped them.
-          setAutoPlayStream({
-            ...source,
-            title: source.title || result.title,
-            author: source.author || result.author,
-            thumbnail:
-              source.thumbnail ||
-              pickThumbnail(result.thumbnails, 480)?.url,
+          playStream({
+            stream: {
+              ...source,
+              title: source.title || result.title,
+              author: source.author || result.author,
+              thumbnail:
+                source.thumbnail ||
+                pickThumbnail(result.thumbnails, 480)?.url,
+            },
           });
           setDownload({
             videoId: result.videoId,
@@ -1000,7 +1002,7 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
         });
       }
     },
-    [download, preset, androidNative, onLibraryChanged, executeDirectDownload],
+    [download, preset, androidNative, onLibraryChanged, executeDirectDownload, playStream],
   );
 
   const friendlyMessage = useMemo(() => {
@@ -1371,7 +1373,10 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
                             onClick={(event) => {
                               event.stopPropagation();
                               if (download?.savedItem) {
-                                setAutoPlayItem(download.savedItem);
+                                playLibrary({
+                                  item: download.savedItem,
+                                  repeatOne: false,
+                                });
                               }
                             }}
                             aria-label="Open in player"
@@ -1455,15 +1460,6 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
           </div>
         </section>
       ) : null}
-
-      <MediaPlayer
-        item={autoPlayItem}
-        stream={autoPlayStream}
-        onClose={() => {
-          setAutoPlayItem(null);
-          setAutoPlayStream(null);
-        }}
-      />
     </>
   );
 }

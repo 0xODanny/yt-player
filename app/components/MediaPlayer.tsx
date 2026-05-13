@@ -8,6 +8,8 @@ import { useSettings } from "@/lib/settings";
 import { type StreamSource } from "@/lib/stream";
 import { MediaSession } from "@jofr/capacitor-media-session";
 
+import type { PlaybackLayout } from "@/lib/playback";
+
 /**
  * Either a saved library item (plays from OPFS via a blob URL) OR a live
  * YouTube stream URL (plays directly from googlevideo.com via HTTP). The
@@ -26,6 +28,9 @@ type MediaPlayerProps = {
     author?: string;
     thumbnail?: string;
   };
+  layout: PlaybackLayout;
+  onMinimize: () => void;
+  onExpand: () => void;
   onClose: () => void;
   /**
    * Library only: loop the current file on natural end (HTMLMediaElement.loop).
@@ -112,6 +117,9 @@ export function MediaPlayer({
   item,
   stream,
   streamMeta,
+  layout,
+  onMinimize,
+  onExpand,
   onClose,
   repeatOne = false,
   onLibraryPlaybackEnded,
@@ -125,6 +133,11 @@ export function MediaPlayer({
   const [audioOnly, setAudioOnly] = useState<boolean>(false);
   const [isPip, setIsPip] = useState(false);
   const [pipAvailable, setPipAvailable] = useState<boolean>(false);
+  const [dockProgress, setDockProgress] = useState({
+    current: 0,
+    duration: 0,
+    paused: true,
+  });
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
   const onLibraryEndedRef = useRef(onLibraryPlaybackEnded);
@@ -178,6 +191,47 @@ export function MediaPlayer({
   // of a <video>. iOS Safari and Android Chrome both happily play the
   // audio track of an mp4 via the <audio> tag.
   const useAudioElement = !!playable && (playable.type === "audio" || audioOnly);
+
+  useEffect(() => {
+    const has = item || stream;
+    if (layout !== "minimized" || !has || !objectUrl) {
+      return;
+    }
+    const el = mediaRef.current;
+    if (!el) {
+      return;
+    }
+    const sync = () => {
+      setDockProgress({
+        current: el.currentTime,
+        duration: Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 0,
+        paused: el.paused,
+      });
+    };
+    sync();
+    el.addEventListener("timeupdate", sync);
+    el.addEventListener("loadedmetadata", sync);
+    el.addEventListener("play", sync);
+    el.addEventListener("pause", sync);
+    const tick = window.setInterval(sync, 400);
+    return () => {
+      window.clearInterval(tick);
+      el.removeEventListener("timeupdate", sync);
+      el.removeEventListener("loadedmetadata", sync);
+      el.removeEventListener("play", sync);
+      el.removeEventListener("pause", sync);
+    };
+  }, [layout, item?.id, stream?.url, objectUrl, item, stream]);
+
+  useEffect(() => {
+    const has = item || stream;
+    if (!has || layout !== "minimized") {
+      document.body.classList.remove("player-dock-visible");
+    } else {
+      document.body.classList.add("player-dock-visible");
+    }
+    return () => document.body.classList.remove("player-dock-visible");
+  }, [item?.id, stream?.url, layout, item, stream]);
 
   useEffect(() => {
     if (!playable) {
@@ -718,123 +772,223 @@ export function MediaPlayer({
   const showAudioToggle = playable.type === "video";
   const showPipButton = playable.type === "video" && !useAudioElement && pipAvailable;
   const isStreaming = playable.kind === "stream";
+  const expanded = layout === "expanded";
+  const dur = dockProgress.duration;
+  const cur = dockProgress.current;
+  const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
 
   return (
-    <div
-      className="player-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Playing ${playable.title}`}
-      onClick={(event) => {
-        if (event.target === dialogRef.current) {
-          onClose();
-        }
-      }}
-    >
-      <div className="player-dialog" ref={dialogRef}>
-        <header className="player-header">
-          <div className="player-titles">
-            <h2>{playable.title}</h2>
-            {playable.author ? <p className="player-sub">{playable.author}</p> : null}
-            {isStreaming ? (
-              <p className="player-stream-tag" aria-label="Streaming directly from YouTube">
-                ● Streaming · ad-free
-              </p>
+    <>
+      <div
+        className={`player-overlay${layout === "minimized" ? " player-overlay--minimized" : ""}`}
+        role="dialog"
+        aria-modal={expanded}
+        aria-hidden={!expanded}
+        aria-label={`Playing ${playable.title}`}
+        onClick={(event) => {
+          if (!expanded) {
+            return;
+          }
+          if (event.target === dialogRef.current) {
+            onClose();
+          }
+        }}
+      >
+        <div className="player-dialog" ref={dialogRef}>
+          <header className="player-header">
+            <div className="player-titles">
+              <h2>{playable.title}</h2>
+              {playable.author ? <p className="player-sub">{playable.author}</p> : null}
+              {isStreaming ? (
+                <p className="player-stream-tag" aria-label="Streaming directly from YouTube">
+                  ● Streaming · ad-free
+                </p>
+              ) : null}
+            </div>
+            <div className="player-header-actions">
+              {expanded ? (
+                <button
+                  type="button"
+                  className="player-minimize"
+                  aria-label="Minimize player"
+                  title="Keep playing while you browse"
+                  onClick={onMinimize}
+                >
+                  <span aria-hidden>▁</span>
+                </button>
+              ) : null}
+              {expanded ? (
+                <button
+                  type="button"
+                  className="player-close"
+                  aria-label="Close player"
+                  onClick={onClose}
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
+          </header>
+
+          <div className="player-toolbar">
+            {showAudioToggle ? (
+              <button
+                type="button"
+                className={`player-mode${audioOnly ? " active" : ""}`}
+                onClick={toggleAudioOnly}
+                aria-pressed={audioOnly}
+                title={audioOnly ? "Switch to video" : "Switch to audio-only"}
+              >
+                {audioOnly ? "Video mode" : "Audio-only"}
+              </button>
             ) : null}
+            {showPipButton ? (
+              <button
+                type="button"
+                className={`player-mode${isPip ? " active" : ""}`}
+                onClick={() => void togglePip()}
+                aria-pressed={isPip}
+                title={isPip ? "Exit Picture-in-Picture" : "Picture-in-Picture"}
+              >
+                {isPip ? "Exit PiP" : "Picture-in-Picture"}
+              </button>
+            ) : null}
+            <span className="player-toolbar-hint">
+              {playable.type === "video"
+                ? audioOnly
+                  ? "Plays with screen off · saves battery"
+                  : settings.pipAuto && pipAvailable
+                    ? "Auto-PiP when you swipe up · audio-only also available"
+                    : pipAvailable
+                      ? "Switch to audio-only or use PiP for screen-off playback"
+                      : "Switch to audio-only for screen-off playback"
+                : "Plays with screen off · lock-screen controls available"}
+              {isAndroidNative() && playable.type === "video" && !audioOnly
+                ? " On Android, use Audio-only or press Home — swiping the app away can stop playback on some phones."
+                : null}
+            </span>
           </div>
-          <button
-            type="button"
-            className="player-close"
-            aria-label="Close player"
-            onClick={onClose}
-          >
-            ×
-          </button>
-        </header>
 
-        <div className="player-toolbar">
-          {showAudioToggle ? (
-            <button
-              type="button"
-              className={`player-mode${audioOnly ? " active" : ""}`}
-              onClick={toggleAudioOnly}
-              aria-pressed={audioOnly}
-              title={audioOnly ? "Switch to video" : "Switch to audio-only"}
-            >
-              {audioOnly ? "Video mode" : "Audio-only"}
-            </button>
-          ) : null}
-          {showPipButton ? (
-            <button
-              type="button"
-              className={`player-mode${isPip ? " active" : ""}`}
-              onClick={() => void togglePip()}
-              aria-pressed={isPip}
-              title={isPip ? "Exit Picture-in-Picture" : "Picture-in-Picture"}
-            >
-              {isPip ? "Exit PiP" : "Picture-in-Picture"}
-            </button>
-          ) : null}
-          <span className="player-toolbar-hint">
-            {playable.type === "video"
-              ? audioOnly
-                ? "Plays with screen off · saves battery"
-                : settings.pipAuto && pipAvailable
-                  ? "Auto-PiP when you swipe up · audio-only also available"
-                  : pipAvailable
-                    ? "Switch to audio-only or use PiP for screen-off playback"
-                    : "Switch to audio-only for screen-off playback"
-              : "Plays with screen off · lock-screen controls available"}
-            {isAndroidNative() && playable.type === "video" && !audioOnly
-              ? " On Android, use Audio-only or press Home — swiping the app away can stop playback on some phones."
-              : null}
-          </span>
-        </div>
-
-        <div className="player-body">
-          {loading ? <p className="player-status">Loading…</p> : null}
-          {error ? <p className="player-status player-error">{error}</p> : null}
-          {!loading && !error && objectUrl ? (
-            useAudioElement ? (
-              <div className="player-audio-wrap">
-                {playable.thumbnail ? (
-                  <img className="player-art" src={playable.thumbnail} alt="" />
-                ) : (
-                  <div className="player-art player-art-fallback" aria-hidden>
-                    {playable.format.toUpperCase()}
-                  </div>
-                )}
-                <audio
-                  key={`${objectUrl}-audio`}
+          <div className="player-body">
+            {loading ? <p className="player-status">Loading…</p> : null}
+            {error ? <p className="player-status player-error">{error}</p> : null}
+            {!loading && !error && objectUrl ? (
+              useAudioElement ? (
+                <div className="player-audio-wrap">
+                  {playable.thumbnail ? (
+                    <img className="player-art" src={playable.thumbnail} alt="" />
+                  ) : (
+                    <div className="player-art player-art-fallback" aria-hidden>
+                      {playable.format.toUpperCase()}
+                    </div>
+                  )}
+                  <audio
+                    key={`${objectUrl}-audio`}
+                    ref={(node) => {
+                      mediaRef.current = node;
+                    }}
+                    className="player-audio"
+                    src={objectUrl}
+                    controls={expanded}
+                    autoPlay
+                    preload="auto"
+                    loop={repeatOne}
+                  />
+                </div>
+              ) : (
+                <video
+                  key={`${objectUrl}-video`}
                   ref={(node) => {
                     mediaRef.current = node;
                   }}
-                  className="player-audio"
+                  className="player-video"
                   src={objectUrl}
-                  controls
+                  controls={expanded}
                   autoPlay
+                  playsInline
                   preload="auto"
                   loop={repeatOne}
                 />
-              </div>
-            ) : (
-              <video
-                key={`${objectUrl}-video`}
-                ref={(node) => {
-                  mediaRef.current = node;
-                }}
-                className="player-video"
-                src={objectUrl}
-                controls
-                autoPlay
-                playsInline
-                preload="auto"
-                loop={repeatOne}
-              />
-            )
-          ) : null}
+              )
+            ) : null}
+          </div>
         </div>
       </div>
-    </div>
+
+      {layout === "minimized" ? (
+        <div className="player-dock" role="region" aria-label={`Now playing: ${playable.title}`}>
+          <div className="player-dock-thumb-wrap">
+            {playable.thumbnail ? (
+              <img className="player-dock-thumb" src={playable.thumbnail} alt="" />
+            ) : (
+              <div className="player-dock-thumb player-dock-thumb-fallback" aria-hidden>
+                {playable.format.toUpperCase()}
+              </div>
+            )}
+          </div>
+          <div className="player-dock-center">
+            <p className="player-dock-title">{playable.title}</p>
+            <div className="player-dock-scrub">
+              <div className="player-dock-track" aria-hidden>
+                <div className="player-dock-fill" style={{ width: `${pct}%` }} />
+              </div>
+              <input
+                type="range"
+                className="player-dock-range"
+                min={0}
+                max={Math.max(0.001, dur)}
+                step="any"
+                value={dur > 0 ? Math.min(cur, dur) : 0}
+                aria-label="Seek"
+                onChange={(event) => {
+                  const el = mediaRef.current;
+                  const next = Number(event.target.value);
+                  if (el && Number.isFinite(next)) {
+                    el.currentTime = next;
+                  }
+                }}
+              />
+            </div>
+          </div>
+          <div className="player-dock-actions">
+            <button
+              type="button"
+              className="player-dock-icon-btn"
+              aria-label={dockProgress.paused ? "Play" : "Pause"}
+              onClick={() => {
+                const el = mediaRef.current;
+                if (!el) {
+                  return;
+                }
+                if (el.paused) {
+                  void el.play();
+                } else {
+                  el.pause();
+                }
+              }}
+            >
+              {dockProgress.paused ? "▶" : "⏸"}
+            </button>
+            <button
+              type="button"
+              className="player-dock-icon-btn"
+              aria-label="Expand player"
+              title="Full player"
+              onClick={onExpand}
+            >
+              ⛶
+            </button>
+            <button
+              type="button"
+              className="player-dock-icon-btn player-dock-stop"
+              aria-label="Stop playback"
+              onClick={onClose}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }

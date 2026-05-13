@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.7";
+export const APP_RELEASE_VERSION = "1.1.8";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,14 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.8",
+    title: "May 2026",
+    items: [
+      "Mini player: minimize full-screen playback to a bottom bar (thumbnail, seek, play/pause, expand, stop) so you can keep searching or browsing the library while audio or video plays. Same shell for the PWA and Android APK.",
+      "Smoke theme: Stop and Open on download rows are easier to see (brighter stop, Open styled like a primary action).",
+    ],
+  },
   {
     version: "1.1.7",
     title: "May 2026",

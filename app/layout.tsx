@@ -2,7 +2,9 @@ import type { Metadata, Viewport } from "next";
 import { DM_Sans } from "next/font/google";
 
 import "./globals.css";
+import { PlaybackProvider } from "@/lib/playback";
 import { SettingsProvider } from "@/lib/settings";
+import { GlobalMediaHost } from "./components/GlobalMediaHost";
 import { ServiceWorkerRegistrar } from "./sw-register";
 import { ViewportLock } from "./viewport-lock";
 
@@ -50,7 +52,12 @@ export default function RootLayout({
       <body>
         <ServiceWorkerRegistrar />
         <ViewportLock />
-        <SettingsProvider>{children}</SettingsProvider>
+        <SettingsProvider>
+          <PlaybackProvider>
+            {children}
+            <GlobalMediaHost />
+          </PlaybackProvider>
+        </SettingsProvider>
       </body>
     </html>
   );

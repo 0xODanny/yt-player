@@ -1264,8 +1264,157 @@ button.footer-share {
   cursor: pointer;
 }
 
+.player-header-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.player-minimize {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(36, 72, 0, 0.18);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.player-minimize:hover {
+  color: var(--text);
+}
+
 .player-close:hover {
   color: var(--text);
+}
+
+.player-overlay.player-overlay--minimized {
+  pointer-events: none;
+  background: transparent;
+  backdrop-filter: none;
+  animation: none;
+}
+
+.player-overlay.player-overlay--minimized .player-dialog {
+  pointer-events: none;
+  opacity: 0;
+}
+
+.player-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  background: var(--panel-strong);
+  border-top: 1px solid var(--panel-border);
+  box-shadow: 0 -8px 28px rgba(36, 72, 0, 0.14);
+}
+
+.player-dock-thumb-wrap {
+  flex: 0 0 52px;
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.player-dock-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.player-dock-thumb-fallback {
+  display: grid;
+  place-items: center;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.player-dock-center {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.player-dock-title {
+  margin: 0 0 4px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-dock-scrub {
+  position: relative;
+  height: 12px;
+}
+
+.player-dock-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(36, 72, 0, 0.12);
+}
+
+.player-dock-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+}
+
+.player-dock-range {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.player-dock-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.player-dock-icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(36, 72, 0, 0.15);
+  background: rgba(247, 244, 224, 0.55);
+  color: var(--text);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.player-dock-stop {
+  color: var(--danger);
+  border-color: rgba(214, 31, 15, 0.28);
+}
+
+body.player-dock-visible .shell {
+  padding-bottom: calc(48px + 78px + env(safe-area-inset-bottom));
 }
 
 .player-toolbar {
@@ -2380,6 +2529,53 @@ html[data-theme="smoke"] .settings-description {
 
 html[data-theme="smoke"] .folder-playback {
   border-top-color: rgba(148, 163, 184, 0.22);
+}
+
+html[data-theme="smoke"] .search-action-stop:not(:disabled) {
+  color: #fecaca;
+  background: rgba(248, 113, 113, 0.14);
+  border-color: rgba(252, 165, 165, 0.45);
+}
+
+html[data-theme="smoke"] .search-action-open:not(:disabled) {
+  color: var(--on-accent);
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+  border-color: rgba(94, 179, 224, 0.55);
+}
+
+html[data-theme="smoke"] .search-action-stop:not(:disabled):hover,
+html[data-theme="smoke"] .search-action-open:not(:disabled):hover {
+  filter: brightness(1.06);
+}
+
+html[data-theme="smoke"] .player-dock {
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45);
+}
+
+html[data-theme="smoke"] .player-dock-track {
+  background: rgba(148, 163, 184, 0.22);
+}
+
+html[data-theme="smoke"] .player-dock-icon-btn {
+  background: rgba(15, 23, 42, 0.55);
+  border-color: rgba(148, 163, 184, 0.32);
+  color: var(--text);
+}
+
+html[data-theme="smoke"] .player-dock-stop {
+  color: #fecaca;
+  border-color: rgba(252, 165, 165, 0.4);
+}
+
+html[data-theme="smoke"] .player-minimize,
+html[data-theme="smoke"] .player-close {
+  border-color: rgba(148, 163, 184, 0.28);
+  color: var(--muted);
+}
+
+html[data-theme="smoke"] .player-minimize:hover,
+html[data-theme="smoke"] .player-close:hover {
+  color: var(--text);
 }
 
 html[data-theme="paper"] {
