@@ -209,10 +209,13 @@ export function MediaPlayer({
   // audio track of an mp4 via the <audio> tag.
   const useAudioElement = !!playable && (playable.type === "audio" || audioOnly);
 
-  /** Progress UI: must not run in useLayoutEffect — sync React updates there
-   *  can block painting and the main thread badly enough to glitch audio,
-   *  including blob: library files. Clock-driven updates use startTransition
-   *  so the decoder keeps priority. */
+  /** Progress UI for dock + stream custom controls only.
+   *
+   * Library / OPFS files use the browser's native media controls when
+   * expanded. Subscribing here at high frequency caused constant React
+   * reconciliation that audibly glitched playback on Safari and Brave
+   * (WebKit-style engines). Streams always need our scrubber; the dock
+   * needs updates whenever the player is minimized. */
   useEffect(() => {
     const has = item || stream;
     if (!has || !objectUrl) {
@@ -220,6 +223,10 @@ export function MediaPlayer({
     }
     const el = mediaRef.current;
     if (!el) {
+      return;
+    }
+    const needsProgressPolling = Boolean(stream) || layout === "minimized";
+    if (!needsProgressPolling) {
       return;
     }
     streamWaitingRef.current = false;
@@ -309,13 +316,23 @@ export function MediaPlayer({
       publishImmediate();
     };
 
+    let loadDebounce: number | undefined;
+    const publishLoadDebounced = () => {
+      if (loadDebounce !== undefined) {
+        window.clearTimeout(loadDebounce);
+      }
+      loadDebounce = window.setTimeout(() => {
+        loadDebounce = undefined;
+        publishImmediate();
+      }, 140);
+    };
+
     publishImmediate();
     el.addEventListener("timeupdate", publishThrottledFromClock);
-    el.addEventListener("progress", publishThrottledFromClock);
     el.addEventListener("loadedmetadata", publishImmediate);
-    el.addEventListener("loadeddata", publishImmediate);
-    el.addEventListener("canplay", publishImmediate);
-    el.addEventListener("canplaythrough", publishImmediate);
+    el.addEventListener("loadeddata", publishLoadDebounced);
+    el.addEventListener("canplay", publishLoadDebounced);
+    el.addEventListener("canplaythrough", publishLoadDebounced);
     el.addEventListener("play", publishImmediate);
     el.addEventListener("pause", publishImmediate);
     el.addEventListener("seeking", publishImmediate);
@@ -323,12 +340,14 @@ export function MediaPlayer({
     el.addEventListener("waiting", onWaiting);
     el.addEventListener("playing", onPlaying);
     return () => {
+      if (loadDebounce !== undefined) {
+        window.clearTimeout(loadDebounce);
+      }
       el.removeEventListener("timeupdate", publishThrottledFromClock);
-      el.removeEventListener("progress", publishThrottledFromClock);
       el.removeEventListener("loadedmetadata", publishImmediate);
-      el.removeEventListener("loadeddata", publishImmediate);
-      el.removeEventListener("canplay", publishImmediate);
-      el.removeEventListener("canplaythrough", publishImmediate);
+      el.removeEventListener("loadeddata", publishLoadDebounced);
+      el.removeEventListener("canplay", publishLoadDebounced);
+      el.removeEventListener("canplaythrough", publishLoadDebounced);
       el.removeEventListener("play", publishImmediate);
       el.removeEventListener("pause", publishImmediate);
       el.removeEventListener("seeking", publishImmediate);
@@ -336,7 +355,7 @@ export function MediaPlayer({
       el.removeEventListener("waiting", onWaiting);
       el.removeEventListener("playing", onPlaying);
     };
-  }, [item?.id, stream?.url, objectUrl, item, stream, useAudioElement]);
+  }, [item?.id, stream?.url, objectUrl, item, stream, useAudioElement, layout]);
 
   // Some browsers defer autoplay on <video> until after layout (especially
   // when controls are custom). One nudge after mount helps stream video

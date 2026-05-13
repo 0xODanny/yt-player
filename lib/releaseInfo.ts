@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.12";
+export const APP_RELEASE_VERSION = "1.1.13";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,14 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.13",
+    title: "May 2026",
+    items: [
+      "Critical playback fix: do not attach high-rate progress listeners when library or downloaded media uses native controls (expanded player). That React traffic was glitching audio/video on Safari and Brave. Polling only runs for YouTube streams (custom scrubber) or when the mini dock is visible.",
+      "Streams: drop the progress event (very chatty during buffering); debounce rapid loadeddata/canplay bursts.",
+    ],
+  },
   {
     version: "1.1.12",
     title: "May 2026",
