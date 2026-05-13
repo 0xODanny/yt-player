@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.13";
+export const APP_RELEASE_VERSION = "1.1.14";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,13 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.14",
+    title: "May 2026",
+    items: [
+      "Streams + mini dock: removed timeupdate entirely (some engines fire it extremely fast while buffering, which still kept the main thread and React busy — fan noise and stutter). Progress bar now uses a fixed ~2 Hz timer only while playing; waiting/playing UI is debounced; seek uses seeked only (no seeking spam).",
+    ],
+  },
   {
     version: "1.1.13",
     title: "May 2026",

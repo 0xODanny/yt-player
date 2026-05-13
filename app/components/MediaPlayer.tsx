@@ -215,7 +215,12 @@ export function MediaPlayer({
    * expanded. Subscribing here at high frequency caused constant React
    * reconciliation that audibly glitched playback on Safari and Brave
    * (WebKit-style engines). Streams always need our scrubber; the dock
-   * needs updates whenever the player is minimized. */
+   * needs updates whenever the player is minimized.
+   *
+   * We avoid `timeupdate` entirely: during buffering some engines fire it
+   * at extreme rates, which still ran JS every tick even with a throttle and
+   * kept React hot (fan noise). Clock + buffer bar use a low fixed-rate
+   * interval while playing only; stall/play edge events are debounced. */
   useEffect(() => {
     const has = item || stream;
     if (!has || !objectUrl) {
@@ -258,7 +263,6 @@ export function MediaPlayer({
       return 0;
     };
 
-    let lastTimeThrottle = 0;
     const merge = (prev: typeof dockProgress, next: typeof dockProgress) => {
       if (
         Math.abs(prev.current - next.current) < 0.1 &&
@@ -298,22 +302,35 @@ export function MediaPlayer({
       });
     };
 
-    const publishThrottledFromClock = () => {
-      const now = performance.now();
-      if (now - lastTimeThrottle < 400) {
-        return;
+    let stallUiDebounce: number | undefined;
+    const publishStallDebounced = () => {
+      if (stallUiDebounce !== undefined) {
+        window.clearTimeout(stallUiDebounce);
       }
-      lastTimeThrottle = now;
-      publishFromClock();
+      stallUiDebounce = window.setTimeout(() => {
+        stallUiDebounce = undefined;
+        publishImmediate();
+      }, 160);
     };
 
     const onWaiting = () => {
       streamWaitingRef.current = true;
-      publishImmediate();
+      publishStallDebounced();
     };
     const onPlaying = () => {
       streamWaitingRef.current = false;
-      publishImmediate();
+      publishStallDebounced();
+    };
+
+    let seekUiDebounce: number | undefined;
+    const publishSeekDebounced = () => {
+      if (seekUiDebounce !== undefined) {
+        window.clearTimeout(seekUiDebounce);
+      }
+      seekUiDebounce = window.setTimeout(() => {
+        seekUiDebounce = undefined;
+        publishImmediate();
+      }, 80);
     };
 
     let loadDebounce: number | undefined;
@@ -327,31 +344,68 @@ export function MediaPlayer({
       }, 140);
     };
 
+    let playheadTick: number | undefined;
+    const startPlayheadTick = () => {
+      if (playheadTick !== undefined) {
+        return;
+      }
+      publishFromClock();
+      playheadTick = window.setInterval(publishFromClock, 480);
+    };
+    const stopPlayheadTick = () => {
+      if (playheadTick !== undefined) {
+        window.clearInterval(playheadTick);
+        playheadTick = undefined;
+      }
+    };
+
+    const onPlay = () => {
+      publishImmediate();
+      startPlayheadTick();
+    };
+    const onPause = () => {
+      publishImmediate();
+      stopPlayheadTick();
+    };
+    const onEnded = () => {
+      stopPlayheadTick();
+      publishImmediate();
+    };
+
     publishImmediate();
-    el.addEventListener("timeupdate", publishThrottledFromClock);
+    if (!el.paused) {
+      startPlayheadTick();
+    }
+
     el.addEventListener("loadedmetadata", publishImmediate);
     el.addEventListener("loadeddata", publishLoadDebounced);
     el.addEventListener("canplay", publishLoadDebounced);
     el.addEventListener("canplaythrough", publishLoadDebounced);
-    el.addEventListener("play", publishImmediate);
-    el.addEventListener("pause", publishImmediate);
-    el.addEventListener("seeking", publishImmediate);
-    el.addEventListener("seeked", publishImmediate);
+    el.addEventListener("play", onPlay);
+    el.addEventListener("pause", onPause);
+    el.addEventListener("ended", onEnded);
+    el.addEventListener("seeked", publishSeekDebounced);
     el.addEventListener("waiting", onWaiting);
     el.addEventListener("playing", onPlaying);
     return () => {
+      stopPlayheadTick();
       if (loadDebounce !== undefined) {
         window.clearTimeout(loadDebounce);
       }
-      el.removeEventListener("timeupdate", publishThrottledFromClock);
+      if (stallUiDebounce !== undefined) {
+        window.clearTimeout(stallUiDebounce);
+      }
+      if (seekUiDebounce !== undefined) {
+        window.clearTimeout(seekUiDebounce);
+      }
       el.removeEventListener("loadedmetadata", publishImmediate);
       el.removeEventListener("loadeddata", publishLoadDebounced);
       el.removeEventListener("canplay", publishLoadDebounced);
       el.removeEventListener("canplaythrough", publishLoadDebounced);
-      el.removeEventListener("play", publishImmediate);
-      el.removeEventListener("pause", publishImmediate);
-      el.removeEventListener("seeking", publishImmediate);
-      el.removeEventListener("seeked", publishImmediate);
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onPause);
+      el.removeEventListener("ended", onEnded);
+      el.removeEventListener("seeked", publishSeekDebounced);
       el.removeEventListener("waiting", onWaiting);
       el.removeEventListener("playing", onPlaying);
     };
