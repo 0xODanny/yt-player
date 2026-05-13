@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { getItemObjectUrl, type ManifestItem } from "@/lib/library";
 import { isAndroidNative } from "@/lib/platform";
@@ -190,38 +190,74 @@ export function MediaPlayer({
   // a video AND user enabled audioOnly, render an <audio> element instead
   // of a <video>. iOS Safari and Android Chrome both happily play the
   // audio track of an mp4 via the <audio> tag.
-  const useAudioElement = !!playable && (playable.type === "audio" || audioOnly);
+  //
+  // YouTube *stream* URLs resolved as type "audio" are still often MP4
+  // (or similar) byte streams; Safari / installed PWA is more reliable
+  // with a <video playsInline> than <audio> for those same URLs.
+  const isStreamAudioOnly =
+    !!playable && playable.kind === "stream" && playable.type === "audio";
+  const useAudioElement =
+    !!playable &&
+    (isStreamAudioOnly ? false : playable.type === "audio" || audioOnly);
 
-  useEffect(() => {
+  /** Best-effort duration for progress UI when metadata reports Infinity/NaN. */
+  useLayoutEffect(() => {
     const has = item || stream;
-    if (layout !== "minimized" || !has || !objectUrl) {
+    if (!has || !objectUrl) {
       return;
     }
     const el = mediaRef.current;
     if (!el) {
       return;
     }
+    const readMediaDuration = (media: HTMLMediaElement) => {
+      const d = media.duration;
+      if (Number.isFinite(d) && d > 0 && d !== Number.POSITIVE_INFINITY) {
+        return d;
+      }
+      try {
+        if (media.seekable && media.seekable.length > 0) {
+          const end = media.seekable.end(media.seekable.length - 1);
+          if (Number.isFinite(end) && end > 0) {
+            return end;
+          }
+        }
+      } catch {
+        // seekable can throw before any data is present
+      }
+      return 0;
+    };
     const sync = () => {
       setDockProgress({
         current: el.currentTime,
-        duration: Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 0,
+        duration: readMediaDuration(el),
         paused: el.paused,
       });
     };
     sync();
     el.addEventListener("timeupdate", sync);
+    el.addEventListener("progress", sync);
     el.addEventListener("loadedmetadata", sync);
+    el.addEventListener("loadeddata", sync);
+    el.addEventListener("canplay", sync);
     el.addEventListener("play", sync);
     el.addEventListener("pause", sync);
-    const tick = window.setInterval(sync, 400);
+    el.addEventListener("seeking", sync);
+    el.addEventListener("seeked", sync);
+    const tick = window.setInterval(sync, 500);
     return () => {
       window.clearInterval(tick);
       el.removeEventListener("timeupdate", sync);
+      el.removeEventListener("progress", sync);
       el.removeEventListener("loadedmetadata", sync);
+      el.removeEventListener("loadeddata", sync);
+      el.removeEventListener("canplay", sync);
       el.removeEventListener("play", sync);
       el.removeEventListener("pause", sync);
+      el.removeEventListener("seeking", sync);
+      el.removeEventListener("seeked", sync);
     };
-  }, [layout, item?.id, stream?.url, objectUrl, item, stream]);
+  }, [item?.id, stream?.url, objectUrl, item, stream]);
 
   useEffect(() => {
     const has = item || stream;
@@ -895,6 +931,29 @@ export function MediaPlayer({
                     loop={repeatOne}
                   />
                 </div>
+              ) : isStreamAudioOnly ? (
+                <div className="player-audio-wrap">
+                  {playable.thumbnail ? (
+                    <img className="player-art" src={playable.thumbnail} alt="" />
+                  ) : (
+                    <div className="player-art player-art-fallback" aria-hidden>
+                      {playable.format.toUpperCase()}
+                    </div>
+                  )}
+                  <video
+                    key={`${objectUrl}-stream-audio`}
+                    ref={(node) => {
+                      mediaRef.current = node;
+                    }}
+                    className="player-video player-video--stream-audio"
+                    src={objectUrl}
+                    controls={expanded}
+                    autoPlay
+                    playsInline
+                    preload="auto"
+                    loop={repeatOne}
+                  />
+                </div>
               ) : (
                 <video
                   key={`${objectUrl}-video`}
@@ -953,7 +1012,7 @@ export function MediaPlayer({
           <div className="player-dock-actions">
             <button
               type="button"
-              className="player-dock-icon-btn"
+              className="player-dock-icon-btn player-dock-playpause"
               aria-label={dockProgress.paused ? "Play" : "Pause"}
               onClick={() => {
                 const el = mediaRef.current;
@@ -967,7 +1026,11 @@ export function MediaPlayer({
                 }
               }}
             >
-              {dockProgress.paused ? "▶" : "⏸"}
+              {dockProgress.paused ? (
+                <span className="player-dock-play-glyph" aria-hidden />
+              ) : (
+                <span className="player-dock-pause-glyph" aria-hidden />
+              )}
             </button>
             <button
               type="button"

@@ -1301,7 +1301,12 @@ button.footer-share {
 
 .player-overlay.player-overlay--minimized .player-dialog {
   pointer-events: none;
-  opacity: 0;
+  /*
+   * Must stay slightly opaque: `opacity: 0` makes Chrome / Safari treat
+   * the subtree as non-visible and throttle or tear down media decode
+   * (screeching audio, PWA silence) while minimized.
+   */
+  opacity: 0.04;
 }
 
 .player-dock {
@@ -1408,6 +1413,39 @@ button.footer-share {
   cursor: pointer;
 }
 
+.player-dock-playpause {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.player-dock-play-glyph {
+  display: block;
+  width: 0;
+  height: 0;
+  margin-left: 4px;
+  border-style: solid;
+  border-width: 8px 0 8px 13px;
+  border-color: transparent transparent transparent #3d6a1f;
+}
+
+.player-dock-pause-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 16px;
+}
+
+.player-dock-pause-glyph::before,
+.player-dock-pause-glyph::after {
+  content: "";
+  width: 3px;
+  height: 15px;
+  border-radius: 1px;
+  background: #3d6a1f;
+}
+
 .player-dock-stop {
   color: var(--danger);
   border-color: rgba(214, 31, 15, 0.28);
@@ -1477,6 +1515,11 @@ body.player-dock-visible .shell {
   max-height: 70vh;
   background: #000;
   border-radius: 12px;
+}
+
+/* Stream "Play audio": decode in <video> for Safari/PWA; keep chrome like audio mode */
+.player-video.player-video--stream-audio {
+  max-height: 120px;
 }
 
 .player-audio-wrap {
@@ -2557,25 +2600,44 @@ html[data-theme="smoke"] .player-dock-track {
 }
 
 html[data-theme="smoke"] .player-dock-icon-btn {
-  background: rgba(15, 23, 42, 0.55);
-  border-color: rgba(148, 163, 184, 0.32);
-  color: var(--text);
+  background: rgba(226, 232, 240, 0.94);
+  border-color: rgba(148, 163, 184, 0.4);
+  color: var(--bg);
 }
 
 html[data-theme="smoke"] .player-dock-stop {
-  color: #fecaca;
-  border-color: rgba(252, 165, 165, 0.4);
+  color: var(--bg);
+  border-color: rgba(148, 163, 184, 0.45);
 }
 
 html[data-theme="smoke"] .player-minimize,
 html[data-theme="smoke"] .player-close {
-  border-color: rgba(148, 163, 184, 0.28);
-  color: var(--muted);
+  border-color: rgba(148, 163, 184, 0.35);
+  background: rgba(226, 232, 240, 0.75);
+  color: var(--bg);
 }
 
 html[data-theme="smoke"] .player-minimize:hover,
 html[data-theme="smoke"] .player-close:hover {
-  color: var(--text);
+  color: var(--bg-deep);
+}
+
+/* Smoke: player toolbar pills — dark text on light control surfaces */
+html[data-theme="smoke"] .player-mode {
+  background: rgba(241, 245, 249, 0.94);
+  border-color: rgba(148, 163, 184, 0.38);
+  color: var(--bg);
+}
+
+html[data-theme="smoke"] .player-mode:hover {
+  color: var(--bg-deep);
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+html[data-theme="smoke"] .player-mode.active {
+  color: var(--bg-deep);
+  background: rgba(226, 232, 240, 0.98);
+  border-color: rgba(94, 179, 224, 0.55);
 }
 
 html[data-theme="paper"] {

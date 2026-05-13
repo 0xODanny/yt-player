@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.8";
+export const APP_RELEASE_VERSION = "1.1.9";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,15 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.9",
+    title: "May 2026",
+    items: [
+      "Mini player: playback no longer stops or glitches when minimized (browsers were suspending media hidden at full opacity zero). Dock play/pause uses triangle and bar icons instead of emoji.",
+      "Stream “Play audio” uses the same video pipeline as “Play video” where Safari/PWA needs it; progress bar reads duration from seekable ranges when metadata is late.",
+      "Smoke theme: Audio-only, Picture-in-Picture, dock, and header buttons use dark text on light control surfaces so labels stay readable.",
+    ],
+  },
   {
     version: "1.1.8",
     title: "May 2026",
