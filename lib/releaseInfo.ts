@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.2";
+export const APP_RELEASE_VERSION = "1.1.3";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -20,6 +20,13 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.3",
+    title: "May 2026",
+    items: [
+      "Android APK: Export library now opens the system share sheet (same as exporting a track) — WebView was ignoring the old download link.",
+    ],
+  },
   {
     version: "1.1.2",
     title: "May 2026",

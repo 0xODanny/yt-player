@@ -113,7 +113,9 @@ export function TipsPanel({ open, onClose }: TipsPanelProps) {
             <ul className="tips-bullets">
               <li>
                 In the <strong>Library</strong> tab, use <strong>Export library</strong> regularly and
-                keep the file somewhere safe (cloud drive, computer, email to yourself). You can{" "}
+                keep the file somewhere safe (cloud drive, computer, email to yourself). On the{" "}
+                <strong>Android app</strong>, that button opens the <strong>system share sheet</strong>{" "}
+                so you can save the JSON to My Files, Drive, etc. You can{" "}
                 <strong>Import</strong> it later on the same or another device at{" "}
                 <a href="https://pepinho.lol" target="_blank" rel="noreferrer">
                   pepinho.lol

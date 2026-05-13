@@ -282,10 +282,30 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
   const handleExportManifest = useCallback(async () => {
     const text = await exportManifest();
     const blob = new Blob([text], { type: "application/json" });
+    const filename = `library-manifest-${new Date().toISOString().slice(0, 10)}.json`;
+
+    // Android WebView often ignores synthetic <a download> clicks for
+    // blob: URLs — same reason as handleExportToDevice uses the share sheet.
+    if (isAndroidNative()) {
+      try {
+        await shareBlobNative(blob, {
+          filename,
+          mime: "application/json",
+          dialogTitle: "Export library",
+        });
+      } catch (error) {
+        console.error("[library] manifest native share failed", error);
+        window.alert(
+          "Couldn't open the share sheet to export the manifest. Try again, or use Export on each track if needed.",
+        );
+      }
+      return;
+    }
+
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `library-manifest-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.download = filename;
     document.body.appendChild(anchor);
     anchor.click();
     document.body.removeChild(anchor);
