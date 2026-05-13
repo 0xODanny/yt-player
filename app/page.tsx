@@ -19,6 +19,7 @@ import {
 } from "@/lib/library";
 import { useSettings } from "@/lib/settings";
 import { videoIdFromSourceUrl } from "@/lib/search";
+import { sharePepinhoApp } from "@/lib/shareApp";
 
 import { LibraryView } from "./components/LibraryView";
 import { SearchView } from "./components/SearchView";
@@ -1206,8 +1207,21 @@ export default function HomePage() {
           <a href="https://pepinho.lol" target="_blank" rel="noreferrer">
             pepinho.lol
           </a>
+          <span className="footer-tm" title="Trademark">
+            ™
+          </span>
           {" · "}
           <span>2026</span>
+          {" · "}
+          <a href="mailto:hello@pepinho.lol">hello@pepinho.lol</a>
+          {" · "}
+          <button
+            type="button"
+            className="link-button footer-share"
+            onClick={() => void sharePepinhoApp()}
+          >
+            Share app
+          </button>
         </p>
       </footer>
     </main>

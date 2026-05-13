@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { isAndroidNative } from "@/lib/platform";
 import { isStandaloneDisplayMode } from "@/lib/pwaInstall";
+import { sharePepinhoApp } from "@/lib/shareApp";
 
 type TipsPanelProps = {
   open: boolean;
@@ -13,6 +14,7 @@ type TipsPanelProps = {
 export function TipsPanel({ open, onClose }: TipsPanelProps) {
   const [androidApp, setAndroidApp] = useState(false);
   const [standalone, setStandalone] = useState(false);
+  const [shareHint, setShareHint] = useState<string | null>(null);
 
   useEffect(() => {
     setAndroidApp(isAndroidNative());
@@ -21,6 +23,12 @@ export function TipsPanel({ open, onClose }: TipsPanelProps) {
   useEffect(() => {
     setStandalone(isStandaloneDisplayMode());
   }, []);
+
+  useEffect(() => {
+    if (open) {
+      setShareHint(null);
+    }
+  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -97,6 +105,29 @@ export function TipsPanel({ open, onClose }: TipsPanelProps) {
           ) : null}
 
           <section className="tips-section">
+            <h3 className="tips-section-title">Back up your library</h3>
+            <p className="tips-lead">
+              Your saved tracks and videos live in <strong>browser or app storage on this device</strong>.
+              If you clear site data, switch phones, or the OS reclaims space, you can lose that library.
+            </p>
+            <ul className="tips-bullets">
+              <li>
+                In the <strong>Library</strong> tab, use <strong>Export library</strong> regularly and
+                keep the file somewhere safe (cloud drive, computer, email to yourself). You can{" "}
+                <strong>Import</strong> it later on the same or another device at{" "}
+                <a href="https://pepinho.lol" target="_blank" rel="noreferrer">
+                  pepinho.lol
+                </a>
+                .
+              </li>
+              <li>
+                Export is the best way to keep <strong>playlists, folders, and file references</strong>{" "}
+                together — treat it like a backup of your collection.
+              </li>
+            </ul>
+          </section>
+
+          <section className="tips-section">
             <h3 className="tips-section-title">Playback habits</h3>
             <ul className="tips-bullets">
               <li>
@@ -137,11 +168,45 @@ export function TipsPanel({ open, onClose }: TipsPanelProps) {
                 can grab the latest artifact there).
               </li>
               <li>
-                <strong>Export library</strong> occasionally from the Library tab if you care
-                about backups — stored files stay on this device / origin.
+                Use <strong>Export library</strong> from the Library tab before big OS or browser
+                updates — see <strong>Back up your library</strong> above.
               </li>
             </ul>
           </section>
+
+          <div className="tips-footer">
+            <button
+              type="button"
+              className="tips-share-button"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    const result = await sharePepinhoApp();
+                    if (result === "copied") {
+                      setShareHint("Link copied — paste it anywhere you like.");
+                    } else if (result === "fallback") {
+                      setShareHint("Use the dialog to copy the link.");
+                    } else {
+                      setShareHint(null);
+                    }
+                  } catch {
+                    setShareHint("Couldn’t open the share sheet. Try again.");
+                  }
+                  window.setTimeout(() => setShareHint(null), 4000);
+                })();
+              }}
+            >
+              Share Pepinho
+            </button>
+            <p className="tips-share-caption muted-text">
+              Sends a short message and a link to{" "}
+              <a href="https://pepinho.lol" target="_blank" rel="noreferrer">
+                pepinho.lol
+              </a>{" "}
+              through your phone&apos;s share menu (or copies the link on desktop).
+            </p>
+            {shareHint ? <p className="tips-share-feedback">{shareHint}</p> : null}
+          </div>
         </div>
       </div>
     </div>

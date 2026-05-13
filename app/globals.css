@@ -761,6 +761,21 @@ code {
   text-decoration: underline;
 }
 
+.footer-tm {
+  font-size: 0.65em;
+  vertical-align: super;
+  margin-left: 1px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+button.footer-share {
+  font-size: inherit;
+  vertical-align: baseline;
+  padding: 0;
+  margin: 0;
+}
+
 /* ── Tab bar ─────────────────────────────────────────── */
 .tab-bar {
   display: inline-flex;
@@ -1649,6 +1664,50 @@ code {
   margin: 0;
   font-size: 0.8rem;
   line-height: 1.4;
+}
+
+.tips-footer {
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(36, 72, 0, 0.1);
+  display: grid;
+  gap: 8px;
+}
+
+.tips-share-button {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(98, 144, 53, 0.45);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  color: #fff;
+  cursor: pointer;
+  justify-self: start;
+}
+
+.tips-share-button:hover {
+  filter: brightness(1.05);
+}
+
+.tips-share-caption {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  max-width: 42ch;
+}
+
+.tips-share-caption a {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.tips-share-feedback {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--accent-strong);
+  font-weight: 600;
 }
 
 /* iOS-style toggle switch */

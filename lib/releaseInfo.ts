@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.1";
+export const APP_RELEASE_VERSION = "1.1.2";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -20,6 +20,13 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.2",
+    title: "May 2026",
+    items: [
+      "Tips: new “Back up your library” section and Share Pepinho (link + message). Footer: site ™, year, support email, and Share app.",
+    ],
+  },
   {
     version: "1.1.1",
     title: "May 2026",
