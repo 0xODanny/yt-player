@@ -29,7 +29,8 @@ import {
   detectOriginStatus,
   type OriginStatus,
 } from "@/lib/origin";
-import { isAndroidNative } from "@/lib/platform";
+import { isAndroidNative, isNative } from "@/lib/platform";
+import { isStandaloneDisplayMode } from "@/lib/pwaInstall";
 import { useSettings } from "@/lib/settings";
 
 import { MediaPlayer } from "./MediaPlayer";
@@ -61,6 +62,11 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
   });
   useEffect(() => {
     setOriginStatus(detectOriginStatus());
+  }, []);
+
+  const [standalonePwa, setStandalonePwa] = useState(false);
+  useEffect(() => {
+    setStandalonePwa(isStandaloneDisplayMode());
   }, []);
 
   const refresh = useCallback(async () => {
@@ -381,13 +387,15 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
           </div>
         ) : null}
 
-        {storage && !storage.persisted ? (
+        {storage && !storage.persisted && !isNative() && !standalonePwa ? (
           <p className="storage-warning" role="status">
-            Your library isn&apos;t pinned to this device yet — Safari may
-            clear it after about a week of disuse. To fix: tap the Share
-            icon in Safari, then{" "}
-            <strong>&ldquo;Add to Home Screen&rdquo;</strong>, then open the
-            app from that home-screen icon.
+            <strong>Using Pepinho in a browser tab?</strong> Your library may be
+            cleared if the browser reclaims space. For the best experience: on{" "}
+            <strong>iPhone (Safari)</strong>, tap Share, then{" "}
+            <strong>Add to Home Screen</strong>, and open the app from that icon.
+            On <strong>Android (Chrome)</strong>, open the menu (⋮) and choose{" "}
+            <strong>Install app</strong> or <strong>Add to Home screen</strong>.
+            This message does not appear in the installed app or the Android APK.
           </p>
         ) : null}
 

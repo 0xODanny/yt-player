@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { getItemObjectUrl, type ManifestItem } from "@/lib/library";
+import { isAndroidNative } from "@/lib/platform";
 import { useSettings } from "@/lib/settings";
 import { type StreamSource } from "@/lib/stream";
 import { MediaSession } from "@jofr/capacitor-media-session";
@@ -124,10 +125,16 @@ export function MediaPlayer({
   const [audioOnly, setAudioOnly] = useState<boolean>(false);
   const [isPip, setIsPip] = useState(false);
   const [pipAvailable, setPipAvailable] = useState<boolean>(false);
+  const [androidNative, setAndroidNative] = useState(false);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
   const onLibraryEndedRef = useRef(onLibraryPlaybackEnded);
+  const wasPlayingBeforeBackgroundRef = useRef(false);
   onLibraryEndedRef.current = onLibraryPlaybackEnded;
+
+  useEffect(() => {
+    setAndroidNative(isAndroidNative());
+  }, []);
 
   // Whichever source is set drives the player. `stream` wins if both are
   // provided, but in practice callers pass exactly one.
@@ -369,6 +376,55 @@ export function MediaPlayer({
     return () => {
       el.removeEventListener("play", onPlay);
       el.removeEventListener("pause", onPause);
+    };
+  }, [objectUrl, useAudioElement]);
+
+  /**
+   * Samsung / some OEMs pause WebView media when the app leaves the
+   * foreground. When we come back, try to resume if playback was active.
+   */
+  useEffect(() => {
+    if (!objectUrl) {
+      return;
+    }
+
+    let removeListener: (() => void) | undefined;
+
+    void (async () => {
+      try {
+        const { Capacitor } = await import("@capacitor/core");
+        const { App } = await import("@capacitor/app");
+        if (!Capacitor.isNativePlatform()) {
+          return;
+        }
+        const sub = await App.addListener("appStateChange", ({ isActive }) => {
+          const el = mediaRef.current;
+          if (!isActive) {
+            if (el && !el.paused && !el.ended) {
+              wasPlayingBeforeBackgroundRef.current = true;
+            }
+            return;
+          }
+          if (
+            el &&
+            wasPlayingBeforeBackgroundRef.current &&
+            el.paused &&
+            !el.ended
+          ) {
+            void el.play().catch(() => undefined);
+          }
+          wasPlayingBeforeBackgroundRef.current = false;
+        });
+        removeListener = () => {
+          void sub.remove();
+        };
+      } catch {
+        // Web or incomplete native install — skip
+      }
+    })();
+
+    return () => {
+      removeListener?.();
     };
   }, [objectUrl, useAudioElement]);
 
@@ -729,6 +785,9 @@ export function MediaPlayer({
                     ? "Switch to audio-only or use PiP for screen-off playback"
                     : "Switch to audio-only for screen-off playback"
               : "Plays with screen off · lock-screen controls available"}
+            {androidNative && playable.type === "video" && !audioOnly
+              ? " On Android, use Audio-only or press Home — swiping the app away can stop playback on some phones."
+              : null}
           </span>
         </div>
 

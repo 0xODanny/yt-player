@@ -18,6 +18,17 @@ const isStaticExport = process.env.NEXT_OUTPUT === "export";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   outputFileTracingRoot: currentDirPath,
+  env: {
+    NEXT_PUBLIC_APP_RELEASE_VERSION:
+      process.env.NEXT_PUBLIC_APP_RELEASE_VERSION ??
+      process.env.npm_package_version ??
+      "0.1.0",
+    NEXT_PUBLIC_BUILD_GIT_SHA:
+      process.env.NEXT_PUBLIC_BUILD_GIT_SHA ??
+      process.env.VERCEL_GIT_COMMIT_SHA ??
+      process.env.GITHUB_SHA ??
+      "",
+  },
   ...(isStaticExport
     ? {
         output: "export",

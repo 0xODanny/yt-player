@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isAndroidNative } from "@/lib/platform";
+import {
+  RELEASE_NOTES,
+  getDisplayedReleaseVersion,
+} from "@/lib/releaseInfo";
 import {
   SETTING_DEFINITIONS,
   filterSettingDefinitionsForPlatform,
@@ -19,6 +23,13 @@ type SettingsPanelProps = {
 export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const { settings, update, reset } = useSettings();
   const dialogRef = useRef<HTMLDivElement | null>(null);
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+
+  const buildSha =
+    typeof process !== "undefined"
+      ? (process.env.NEXT_PUBLIC_BUILD_GIT_SHA ?? "").trim()
+      : "";
 
   useEffect(() => {
     if (!open) {
@@ -56,6 +67,50 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
     }
     return Array.from(map.entries());
   }, [androidNative]);
+
+  const checkForUpdates = useCallback(async () => {
+    setUpdateBusy(true);
+    setUpdateMessage(null);
+    try {
+      const response = await fetch(
+        "https://api.github.com/repos/0xODanny/yt-player/commits/main",
+        { headers: { Accept: "application/vnd.github+json" } },
+      );
+      if (!response.ok) {
+        setUpdateMessage("Couldn’t check right now. Try again later.");
+        return;
+      }
+      const data = (await response.json()) as { sha?: string };
+      const remote = (data.sha ?? "").trim();
+      if (!remote) {
+        setUpdateMessage("Unexpected response while checking.");
+        return;
+      }
+      if (!buildSha) {
+        setUpdateMessage(
+          "This copy doesn’t include a build stamp (normal when running from source).",
+        );
+        return;
+      }
+      if (remote === buildSha) {
+        setUpdateMessage("You’re on the latest public build.");
+        return;
+      }
+      const a = remote.slice(0, 7).toLowerCase();
+      const b = buildSha.slice(0, 7).toLowerCase();
+      if (a === b) {
+        setUpdateMessage("You’re on the latest public build.");
+        return;
+      }
+      setUpdateMessage(
+        "A newer public build exists. Refresh this site or download the latest APK from GitHub Actions.",
+      );
+    } catch {
+      setUpdateMessage("Network error — check your connection.");
+    } finally {
+      setUpdateBusy(false);
+    }
+  }, [buildSha]);
 
   if (!open) {
     return null;
@@ -142,6 +197,54 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
               </ul>
             </section>
           ))}
+          <section className="settings-section settings-about">
+            <h3 className="settings-section-title">About</h3>
+            <p className="about-version-line">
+              <strong>Pepinho Player</strong> · release{" "}
+              <span className="about-version-number">{getDisplayedReleaseVersion()}</span>
+            </p>
+            {buildSha ? (
+              <p className="about-build-line muted-text">
+                Build reference:{" "}
+                <code className="about-build-sha">{buildSha.slice(0, 7)}</code>
+                {buildSha.length > 7 ? "…" : null}
+              </p>
+            ) : (
+              <p className="about-build-line muted-text">
+                Local build — no public build reference embedded.
+              </p>
+            )}
+            <div className="about-updates-row">
+              <button
+                type="button"
+                className="link-button"
+                disabled={updateBusy}
+                onClick={() => void checkForUpdates()}
+              >
+                {updateBusy ? "Checking…" : "Check for updates"}
+              </button>
+              {updateMessage ? (
+                <p className="about-update-message">{updateMessage}</p>
+              ) : null}
+            </div>
+            <h4 className="about-whats-new">What&apos;s new</h4>
+            <div className="about-scroll" tabIndex={0}>
+              <ul className="about-notes-list">
+                {RELEASE_NOTES.map((entry) => (
+                  <li key={entry.version} className="about-release-block">
+                    <p className="about-release-title">
+                      <strong>{entry.version}</strong> — {entry.title}
+                    </p>
+                    <ul className="about-release-items">
+                      {entry.items.map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </section>
         </div>
 
         <footer className="settings-footer">

@@ -137,6 +137,8 @@ type DownloadState = {
    * stream save, or worker still at ~0–1% progress).
    */
   progressIndeterminate?: boolean;
+  /** Set when status is complete after a library save — use Open to play. */
+  savedItem?: ManifestItem;
   message?: string;
 };
 
@@ -562,10 +564,10 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
                     progress: 100,
                     progressIndeterminate: false,
                     message: undefined,
+                    savedItem: item,
                   }
                 : current,
             );
-            setAutoPlayItem(item);
             onLibraryChanged();
             setSessionSavedVideoIds((prev) => new Set(prev).add(videoId));
             void hapticLibrarySaveSuccess();
@@ -770,8 +772,8 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
           status: "complete",
           progress: 100,
           progressIndeterminate: false,
+          savedItem: item,
         });
-        setAutoPlayItem(item);
         onLibraryChanged();
         setSessionSavedVideoIds((prev) => new Set(prev).add(opts.videoId));
         void hapticLibrarySaveSuccess();
@@ -1223,12 +1225,22 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
                 className="search-item search-item-skeleton"
                 aria-hidden
               >
-                <div className="search-row search-row-skeleton">
-                  <span className="search-thumb search-skeleton-thumb" />
-                  <span className="search-meta search-skeleton-meta">
-                    <span className="search-skeleton-line search-skeleton-title" />
-                    <span className="search-skeleton-line search-skeleton-sub" />
-                  </span>
+                <div className="search-item-layout">
+                  <div className="search-item-thumb-col">
+                    <div className="search-thumb-wrap">
+                      <span className="search-thumb search-skeleton-thumb" />
+                    </div>
+                    <div className="search-item-actions">
+                      <span className="search-skeleton-line search-skeleton-btn" />
+                      <span className="search-skeleton-line search-skeleton-btn" />
+                    </div>
+                  </div>
+                  <div className="search-row search-row-skeleton search-row-main">
+                    <span className="search-meta search-skeleton-meta">
+                      <span className="search-skeleton-line search-skeleton-title" />
+                      <span className="search-skeleton-line search-skeleton-sub" />
+                    </span>
+                  </div>
                 </div>
               </li>
             ))}
@@ -1260,6 +1272,19 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
               const progressIndeterminate = Boolean(
                 isThis && download?.progressIndeterminate,
               );
+              const canCancel =
+                isThis &&
+                (download?.status === "queued" || download?.status === "processing");
+              const canOpen =
+                isThis &&
+                download?.status === "complete" &&
+                Boolean(download.savedItem);
+              const showDownloadActions =
+                isThis &&
+                (isDownloading ||
+                  download?.status === "saving" ||
+                  download?.status === "failed" ||
+                  canOpen);
               const stateLabel =
                 isThis &&
                 (download?.status === "queued"
@@ -1273,93 +1298,130 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
                       : download?.status === "streaming"
                         ? "Loading…"
                         : download?.status === "complete"
-                          ? isStreamPreset(preset) ? "Playing" : "Saved"
+                          ? download.savedItem
+                            ? "Saved"
+                            : isStreamPreset(preset)
+                              ? "Playing"
+                              : "Saved"
                           : download?.status === "failed"
                             ? "Failed"
                             : download?.status === "cancelled"
                               ? "Stopped"
                               : "");
-              const canCancel =
-                isThis &&
-                (download?.status === "queued" || download?.status === "processing");
               return (
                 <li key={result.videoId} className="search-item">
-                  {canCancel ? (
+                  <div className="search-item-layout">
+                    <div className="search-item-thumb-col">
+                      <div className="search-thumb-wrap">
+                        {length ? (
+                          <span className="search-duration">{length}</span>
+                        ) : null}
+                        {thumb ? (
+                          <img
+                            className="search-thumb"
+                            src={thumb.url}
+                            alt=""
+                            loading="lazy"
+                          />
+                        ) : (
+                          <span className="search-thumb fallback" aria-hidden>
+                            ▶
+                          </span>
+                        )}
+                        {isThis && isDownloading ? (
+                          <div className="search-thumb-progress-track" aria-hidden>
+                            {progressIndeterminate ? (
+                              <div className="search-thumb-progress-indeterminate">
+                                <span className="search-thumb-progress-sweep" />
+                              </div>
+                            ) : progress > 0 && !progressIndeterminate ? (
+                              <div
+                                className="search-thumb-progress-determinate"
+                                style={{ width: `${Math.max(5, progress)}%` }}
+                              />
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                      {showDownloadActions ? (
+                        <div className="search-item-actions">
+                          <button
+                            type="button"
+                            className="search-action-stop"
+                            disabled={!canCancel}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (canCancel) {
+                                void handleCancelDownload();
+                              }
+                            }}
+                            aria-label="Stop download"
+                            title={
+                              canCancel
+                                ? "Stop — nothing is saved"
+                                : "Only available while downloading"
+                            }
+                          >
+                            Stop
+                          </button>
+                          <button
+                            type="button"
+                            className="search-action-open"
+                            disabled={!canOpen}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (download?.savedItem) {
+                                setAutoPlayItem(download.savedItem);
+                              }
+                            }}
+                            aria-label="Open in player"
+                            title={
+                              canOpen
+                                ? "Play in the player"
+                                : "Available when saving finishes"
+                            }
+                          >
+                            Open
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                     <button
                       type="button"
-                      className="search-cancel"
-                      onClick={() => void handleCancelDownload()}
-                      aria-label="Stop"
-                      title="Stop — nothing is saved"
+                      className="search-row search-row-main"
+                      onClick={() => void handleResultTap(result)}
+                      disabled={Boolean(otherActive) || isDownloading}
+                      title={
+                        otherActive
+                          ? "Wait for the current one to finish"
+                          : presetLabel(preset)
+                      }
                     >
-                      ■
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="search-row"
-                    onClick={() => void handleResultTap(result)}
-                    disabled={Boolean(otherActive) || isDownloading}
-                    title={
-                      otherActive
-                        ? "Wait for the current one to finish"
-                        : presetLabel(preset)
-                    }
-                  >
-                    {thumb ? (
-                      <img
-                        className="search-thumb"
-                        src={thumb.url}
-                        alt=""
-                        loading="lazy"
-                      />
-                    ) : (
-                      <span className="search-thumb fallback" aria-hidden>
-                        ▶
-                      </span>
-                    )}
-                    {length ? (
-                      <span className="search-duration">{length}</span>
-                    ) : null}
-                    <span className="search-meta">
-                      <span className="search-title">
-                        {result.title}
-                        {libraryVideoIds?.has(result.videoId) ? (
-                          <span className="search-in-library">In library</span>
-                        ) : sessionSavedVideoIds.has(result.videoId) ? (
-                          <span className="search-session-saved">Added this session</span>
-                        ) : null}
-                      </span>
-                      <span className="search-sub">
-                        {result.author}
-                        {views ? ` · ${views}` : ""}
-                        {result.publishedText ? ` · ${result.publishedText}` : ""}
-                      </span>
-                      {isThis ? (
-                        <span className={`search-state state-${download?.status}`}>
-                          {stateLabel}
-                          {isDownloading && progressIndeterminate ? (
-                            <span
-                              className="search-progress search-progress-indeterminate"
-                              aria-hidden
-                            >
-                              <span className="search-progress-fill" />
-                            </span>
-                          ) : isDownloading && progress > 0 && !progressIndeterminate ? (
-                            <span className="search-progress">
-                              <span
-                                className="search-progress-fill"
-                                style={{ width: `${Math.max(2, progress)}%` }}
-                              />
-                            </span>
+                      <span className="search-meta">
+                        <span className="search-title">
+                          {result.title}
+                          {libraryVideoIds?.has(result.videoId) ? (
+                            <span className="search-in-library">In library</span>
+                          ) : sessionSavedVideoIds.has(result.videoId) ? (
+                            <span className="search-session-saved">Added this session</span>
                           ) : null}
                         </span>
-                      ) : null}
-                      {isThis && download?.status === "failed" && friendlyMessage ? (
-                        <span className="search-state-error">{friendlyMessage}</span>
-                      ) : null}
-                    </span>
-                  </button>
+                        <span className="search-sub">
+                          {result.author}
+                          {views ? ` · ${views}` : ""}
+                          {result.publishedText ? ` · ${result.publishedText}` : ""}
+                        </span>
+                        {isThis ? (
+                          <span className={`search-state state-${download?.status}`}>
+                            {stateLabel}
+                          </span>
+                        ) : null}
+                        {isThis && download?.status === "failed" && friendlyMessage ? (
+                          <span className="search-state-error">{friendlyMessage}</span>
+                        ) : null}
+                      </span>
+                    </button>
+                  </div>
                 </li>
               );
             })}

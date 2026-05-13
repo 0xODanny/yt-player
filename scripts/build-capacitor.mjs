@@ -17,7 +17,7 @@
  *   wrapped in try/finally so an interrupted build doesn't leave the
  *   tree in a half-renamed state.
  */
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { existsSync, renameSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,23 @@ const PARKED_API_DIR = path.join(ROOT, "app", "_api_capacitor_off");
 
 const args = new Set(process.argv.slice(2));
 const SYNC_ONLY = args.has("--sync-only");
+
+function resolveBuildGitSha() {
+  if (process.env.GITHUB_SHA) {
+    return process.env.GITHUB_SHA.trim();
+  }
+  if (process.env.VERCEL_GIT_COMMIT_SHA) {
+    return process.env.VERCEL_GIT_COMMIT_SHA.trim();
+  }
+  if (process.env.NEXT_PUBLIC_BUILD_GIT_SHA) {
+    return process.env.NEXT_PUBLIC_BUILD_GIT_SHA.trim();
+  }
+  try {
+    return execSync("git rev-parse HEAD", { cwd: ROOT, encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+}
 
 function run(cmd, cmdArgs, env = {}) {
   return new Promise((resolve, reject) => {
@@ -70,8 +87,12 @@ async function withApiParked(work) {
 async function main() {
   if (!SYNC_ONLY) {
     console.log("[capacitor] running static export build…");
+    const buildSha = resolveBuildGitSha();
     await withApiParked(() =>
-      run("npx", ["next", "build"], { NEXT_OUTPUT: "export" }),
+      run("npx", ["next", "build"], {
+        NEXT_OUTPUT: "export",
+        NEXT_PUBLIC_BUILD_GIT_SHA: buildSha,
+      }),
     );
   } else {
     console.log("[capacitor] skipping build (--sync-only)");

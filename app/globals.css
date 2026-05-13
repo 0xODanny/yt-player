@@ -1516,6 +1516,84 @@ code {
   border-top: 1px solid rgba(36, 72, 0, 0.08);
 }
 
+.settings-about .about-version-line {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.about-version-number {
+  font-variant-numeric: tabular-nums;
+}
+
+.about-build-line {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+}
+
+.about-build-sha {
+  font-size: 0.78rem;
+}
+
+.about-updates-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.about-update-message {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text);
+  flex: 1 1 200px;
+}
+
+.about-whats-new {
+  margin: 16px 0 8px;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.about-scroll {
+  max-height: min(240px, 32vh);
+  overflow-y: auto;
+  padding: 4px 8px 8px 0;
+  border: 1px solid rgba(36, 72, 0, 0.1);
+  border-radius: 12px;
+  background: rgba(247, 244, 224, 0.35);
+}
+
+.about-notes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.about-release-block {
+  margin: 0;
+}
+
+.about-release-title {
+  margin: 0 0 6px;
+  font-size: 0.88rem;
+}
+
+.about-release-items {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.about-release-items li {
+  margin-bottom: 4px;
+}
+
 /* iOS-style toggle switch */
 .toggle {
   flex: 0 0 auto;
@@ -1652,31 +1730,90 @@ code {
   border-color: rgba(98, 144, 53, 0.35);
 }
 
-/* Stop button overlaid on a search result row while its download is in
-   flight. Absolutely positioned so we don't have to disturb the existing
-   grid layout of .search-row, and high z-index so the row's main button
-   doesn't steal the tap. */
-.search-cancel {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 2;
-  display: inline-grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  border: 1px solid rgba(214, 31, 15, 0.45);
-  background: rgba(247, 244, 224, 0.85);
-  color: var(--danger);
-  font-size: 0.85rem;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+.search-item-layout {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  gap: 12px;
+  align-items: start;
+  width: 100%;
 }
 
-.search-cancel:hover,
-.search-cancel:active {
-  background: rgba(214, 31, 15, 0.2);
+.search-item-thumb-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.search-thumb-wrap {
+  position: relative;
+  width: 132px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.search-thumb-progress-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+.search-thumb-progress-determinate {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  border-radius: 0 2px 0 0;
+}
+
+.search-thumb-progress-indeterminate {
+  height: 100%;
+  overflow: hidden;
+}
+
+.search-thumb-progress-sweep {
+  display: block;
+  height: 100%;
+  width: 40%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  animation: search-progress-sweep 1.15s ease-in-out infinite;
+}
+
+.search-item-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.search-action-stop,
+.search-action-open {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 7px 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(36, 72, 0, 0.22);
+  cursor: pointer;
+  background: rgba(247, 244, 224, 0.95);
+  color: var(--text);
+}
+
+.search-action-stop {
+  color: var(--danger);
+  border-color: rgba(214, 31, 15, 0.35);
+}
+
+.search-action-stop:disabled,
+.search-action-open:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.search-action-stop:not(:disabled):hover,
+.search-action-open:not(:disabled):hover {
+  filter: brightness(0.97);
 }
 
 .search-row {
@@ -1693,6 +1830,17 @@ code {
   cursor: pointer;
   position: relative;
   font: inherit;
+}
+
+.search-row.search-row-main {
+  display: block;
+  grid-template-columns: unset;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.search-row.search-row-main .search-meta {
+  padding: 10px 12px 10px 0;
 }
 
 .search-row:disabled {
@@ -1861,6 +2009,21 @@ code {
 .search-skeleton-sub {
   width: 58%;
   height: 10px;
+}
+
+.search-skeleton-btn {
+  display: block;
+  width: 100%;
+  height: 30px;
+  border-radius: 10px;
+  margin: 0;
+}
+
+.search-row-skeleton.search-row-main {
+  display: block;
+  cursor: default;
+  pointer-events: none;
+  min-height: 78px;
 }
 
 .progress.progress-indeterminate .progress-bar {
