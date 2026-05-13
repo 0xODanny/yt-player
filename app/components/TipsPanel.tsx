@@ -166,8 +166,8 @@ export function TipsPanel({ open, onClose }: TipsPanelProps) {
             <ul className="tips-bullets">
               <li>
                 Open the <strong>gear</strong> → <strong>About</strong> →{" "}
-                <strong>Check for updates</strong> to see if a newer build is on GitHub (APK users
-                can grab the latest artifact there).
+                <strong>Check for updates</strong> to compare this install with the public site. For
+                the Android app, email <a href="mailto:hello@pepinho.lol">hello@pepinho.lol</a>.
               </li>
               <li>
                 Use <strong>Export library</strong> from the Library tab before big OS or browser
@@ -201,11 +201,11 @@ export function TipsPanel({ open, onClose }: TipsPanelProps) {
               Share Pepinho
             </button>
             <p className="tips-share-caption muted-text">
-              Sends a short message and a link to{" "}
+              Shares a ready-to-send description of Pepinho Player plus{" "}
               <a href="https://pepinho.lol" target="_blank" rel="noreferrer">
                 pepinho.lol
               </a>{" "}
-              through your phone&apos;s share menu (or copies the link on desktop).
+              (or copies that text on desktop).
             </p>
             {shareHint ? <p className="tips-share-feedback">{shareHint}</p> : null}
           </div>

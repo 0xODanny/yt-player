@@ -1,12 +1,50 @@
+import { isAndroidNative } from "./platform";
+import { isStandaloneDisplayMode } from "./pwaInstall";
+
 const PEPINHO_URL = "https://pepinho.lol";
+
+const SHARE_BODY =
+  "Pepinho Player - Search, Download, Play, and Keep a Library of Your Favorite Media Files on your Device.";
 
 export type SharePepinhoResult = "shared" | "copied" | "fallback";
 
-export function getPepinhoSharePayload(): { title: string; text: string; url: string } {
+export type ShareSurface = "android-app" | "pwa" | "browser";
+
+export function getShareSurface(): ShareSurface {
+  if (typeof window === "undefined") {
+    return "browser";
+  }
+  if (isAndroidNative()) {
+    return "android-app";
+  }
+  if (isStandaloneDisplayMode()) {
+    return "pwa";
+  }
+  return "browser";
+}
+
+function shareTitleForSurface(surface: ShareSurface): string {
+  if (surface === "android-app") {
+    return "Pepinho Player for Android";
+  }
+  if (surface === "pwa") {
+    return "Pepinho Player (installed)";
+  }
+  return "Pepinho Player";
+}
+
+export function getPepinhoSharePayload(): {
+  title: string;
+  text: string;
+  url: string;
+  dialogTitle: string;
+} {
+  const surface = getShareSurface();
   return {
-    title: "Pepinho Player",
-    text: "Pepinho Player — search, play, and keep a library on your device.",
+    title: shareTitleForSurface(surface),
+    text: `${SHARE_BODY}\n${PEPINHO_URL}`,
     url: PEPINHO_URL,
+    dialogTitle: "Share Pepinho Player",
   };
 }
 
@@ -39,9 +77,9 @@ export async function sharePepinhoApp(): Promise<SharePepinhoResult> {
     if (Capacitor.isNativePlatform()) {
       await Share.share({
         title: payload.title,
-        text: `${payload.text} ${payload.url}`,
+        text: payload.text,
         url: payload.url,
-        dialogTitle: "Share Pepinho Player",
+        dialogTitle: payload.dialogTitle,
       });
       return "shared";
     }
@@ -50,7 +88,7 @@ export async function sharePepinhoApp(): Promise<SharePepinhoResult> {
   }
 
   try {
-    await navigator.clipboard.writeText(`${payload.text} ${payload.url}`);
+    await navigator.clipboard.writeText(payload.text);
     return "copied";
   } catch {
     window.prompt("Copy this link:", payload.url);

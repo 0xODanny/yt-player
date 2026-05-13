@@ -232,16 +232,16 @@ type PresetOption = {
 };
 
 const PRESET_OPTIONS: PresetOption[] = [
-  { value: "stream-audio", label: "▶ Audio" },
-  { value: "stream-video", label: "▶ Video" },
-  { value: "mp3", label: "↓ MP3" },
-  { value: "video-144p", label: "↓ 144p" },
-  { value: "video-240p", label: "↓ 240p" },
-  { value: "video-360p", label: "↓ 360p" },
-  { value: "video-720p", label: "↓ 720p" },
-  { value: "video-1080p", label: "↓ 1080p" },
-  { value: "direct-audio", label: "⇣ Audio (phone data)", androidNativeOnly: true },
-  { value: "direct-video", label: "⇣ Video (phone data)", androidNativeOnly: true },
+  { value: "stream-audio", label: "Play audio" },
+  { value: "stream-video", label: "Play video" },
+  { value: "mp3", label: "Save MP3" },
+  { value: "video-144p", label: "Save 144p" },
+  { value: "video-240p", label: "Save 240p" },
+  { value: "video-360p", label: "Save 360p" },
+  { value: "video-720p", label: "Save 720p" },
+  { value: "video-1080p", label: "Save 1080p" },
+  { value: "direct-audio", label: "Quick audio (data)", androidNativeOnly: true },
+  { value: "direct-video", label: "Quick video (data)", androidNativeOnly: true },
 ];
 
 export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProps) {
@@ -1165,7 +1165,7 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
               {isStreamPreset(preset)
                 ? `Tap a result to play it ad-free.`
                 : isAndroidNativeOnlyPreset(preset)
-                  ? `Tap a result to save it to your library. The download uses your phone's data. You can lock the screen — closing the app will pause it (you'll see a Resume prompt next time).`
+                  ? `Tap a result to save it to your library (uses your phone's data). You can lock the screen while it saves. If you force-close the app before it finishes, you may see a banner here to try that download again.`
                   : `Tap a result to save it to your library as ${presetLabel(preset)}.`}
             </p>
           </div>

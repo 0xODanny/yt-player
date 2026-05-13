@@ -1211,13 +1211,13 @@ export default function HomePage() {
             ™
           </span>
           {" · "}
-          <span>2026</span>
+          <span className="footer-meta-strong">2026</span>
           {" · "}
           <a href="mailto:hello@pepinho.lol">hello@pepinho.lol</a>
           {" · "}
           <button
             type="button"
-            className="link-button footer-share"
+            className="link-button footer-share footer-meta-strong"
             onClick={() => void sharePepinhoApp()}
           >
             Share app

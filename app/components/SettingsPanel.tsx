@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAndroidNative } from "@/lib/platform";
 import {
   RELEASE_NOTES,
+  compareSemanticVersions,
   getDisplayedReleaseVersion,
 } from "@/lib/releaseInfo";
 import {
@@ -19,6 +20,9 @@ type SettingsPanelProps = {
   open: boolean;
   onClose: () => void;
 };
+
+const REMOTE_PACKAGE_JSON_URL =
+  "https://raw.githubusercontent.com/0xODanny/yt-player/main/yt-local-tool/package.json";
 
 export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const { settings, update, reset } = useSettings();
@@ -72,38 +76,75 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
     setUpdateBusy(true);
     setUpdateMessage(null);
     try {
-      const response = await fetch(
-        "https://api.github.com/repos/0xODanny/yt-player/commits/main",
-        { headers: { Accept: "application/vnd.github+json" } },
-      );
-      if (!response.ok) {
-        setUpdateMessage("Couldn’t check right now. Try again later.");
+      const [commitRes, pkgRes] = await Promise.all([
+        fetch("https://api.github.com/repos/0xODanny/yt-player/commits/main", {
+          headers: { Accept: "application/vnd.github+json" },
+        }),
+        fetch(REMOTE_PACKAGE_JSON_URL, {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        }),
+      ]);
+
+      if (!commitRes.ok) {
+        setUpdateMessage("Couldn't check right now. Try again later.");
         return;
       }
-      const data = (await response.json()) as { sha?: string };
-      const remote = (data.sha ?? "").trim();
-      if (!remote) {
+
+      const commitData = (await commitRes.json()) as { sha?: string };
+      const remoteSha = (commitData.sha ?? "").trim();
+      if (!remoteSha) {
         setUpdateMessage("Unexpected response while checking.");
         return;
       }
-      if (!buildSha) {
+
+      let remoteVersion = "";
+      if (pkgRes.ok) {
+        try {
+          const pkg = (await pkgRes.json()) as { version?: string };
+          remoteVersion = (pkg.version ?? "").trim();
+        } catch {
+          remoteVersion = "";
+        }
+      }
+
+      const localVersion = getDisplayedReleaseVersion().trim();
+      if (remoteVersion && localVersion) {
+        const verCmp = compareSemanticVersions(remoteVersion, localVersion);
+        if (verCmp === 0) {
+          setUpdateMessage("You're using the latest build.");
+          return;
+        }
+        if (verCmp > 0) {
+          setUpdateMessage(
+            "A newer release is available. Refresh this page to load it. For the Android app, email hello@pepinho.lol.",
+          );
+          return;
+        }
         setUpdateMessage(
-          "This copy doesn’t include a build stamp (normal when running from source).",
+          "You're on a newer or pre-release build than the version on the public site.",
         );
         return;
       }
-      if (remote === buildSha) {
-        setUpdateMessage("You’re on the latest public build.");
+
+      if (!buildSha) {
+        setUpdateMessage(
+          "This copy doesn't include a build stamp (normal when running from source).",
+        );
         return;
       }
-      const a = remote.slice(0, 7).toLowerCase();
+      if (remoteSha === buildSha) {
+        setUpdateMessage("You're using the latest build.");
+        return;
+      }
+      const a = remoteSha.slice(0, 7).toLowerCase();
       const b = buildSha.slice(0, 7).toLowerCase();
       if (a === b) {
-        setUpdateMessage("You’re on the latest public build.");
+        setUpdateMessage("You're using the latest build.");
         return;
       }
       setUpdateMessage(
-        "A newer public build exists. Refresh this site or download the latest APK from GitHub Actions.",
+        "A newer public build exists. Refresh this page to load it. For the Android app, email hello@pepinho.lol.",
       );
     } catch {
       setUpdateMessage("Network error — check your connection.");

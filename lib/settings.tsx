@@ -21,6 +21,8 @@ import {
  * No other files need to change to render a new toggle.
  */
 
+export type AppTheme = "pepinho" | "smoke" | "paper";
+
 export type SearchPreset =
   | "mp3"
   | "video-144p"
@@ -39,6 +41,7 @@ export type SearchPreset =
   | "direct-video";
 
 export type Settings = {
+  theme: AppTheme;
   pipAuto: boolean;
   audioOnlyDefault: boolean;
   autoSaveLibrary: boolean;
@@ -47,6 +50,7 @@ export type Settings = {
 };
 
 export const DEFAULT_SETTINGS: Settings = {
+  theme: "pepinho",
   pipAuto: true,
   audioOnlyDefault: false,
   autoSaveLibrary: true,
@@ -97,6 +101,13 @@ export function isAndroidNativeOnlyPreset(preset: SearchPreset): boolean {
  * The migration here is a no-op for known presets; the helper exists
  * so any future renames have a single chokepoint.
  */
+function normalizeTheme(value: unknown): AppTheme {
+  if (value === "smoke" || value === "paper" || value === "pepinho") {
+    return value;
+  }
+  return DEFAULT_SETTINGS.theme;
+}
+
 function normalizeSearchPreset(value: unknown): SearchPreset {
   if (
     typeof value === "string" &&
@@ -112,7 +123,7 @@ export type SettingDefinitionToggle = {
   key: keyof Settings;
   label: string;
   description: string;
-  section: "Playback" | "Library" | "Search";
+  section: "Appearance" | "Playback" | "Library" | "Search";
 };
 
 export type SettingDefinitionSelect = {
@@ -120,7 +131,7 @@ export type SettingDefinitionSelect = {
   key: keyof Settings;
   label: string;
   description: string;
-  section: "Playback" | "Library" | "Search";
+  section: "Appearance" | "Playback" | "Library" | "Search";
   options: Array<{
     value: string;
     label: string;
@@ -136,6 +147,19 @@ export type SettingDefinitionSelect = {
 export type SettingDefinition = SettingDefinitionToggle | SettingDefinitionSelect;
 
 export const SETTING_DEFINITIONS: SettingDefinition[] = [
+  {
+    type: "select",
+    key: "theme",
+    label: "Color theme",
+    description:
+      "OG Pepinho is the classic sage palette. Smoke is a calm dark slate. Paper is a soft light mode with dark text.",
+    section: "Appearance",
+    options: [
+      { value: "pepinho", label: "OG Pepinho (sage)" },
+      { value: "smoke", label: "Smoke (cool dark)" },
+      { value: "paper", label: "Paper (soft light)" },
+    ],
+  },
   {
     key: "pipAuto",
     label: "Auto Picture-in-Picture",
@@ -158,22 +182,22 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
       "Streaming plays the video right away, ad-free. Saving keeps a copy in your library so you can play it offline.",
     section: "Search",
     options: [
-      { value: "stream-audio", label: "Play audio (ad-free)" },
-      { value: "stream-video", label: "Play video (ad-free)" },
-      { value: "mp3", label: "Save as MP3 (~5 MB)" },
-      { value: "video-144p", label: "Save 144p video (~12 MB)" },
-      { value: "video-240p", label: "Save 240p video (~25 MB)" },
-      { value: "video-360p", label: "Save 360p video (~50 MB)" },
-      { value: "video-720p", label: "Save 720p video (~80 MB)" },
-      { value: "video-1080p", label: "Save 1080p video (~150 MB)" },
+      { value: "stream-audio", label: "Play audio" },
+      { value: "stream-video", label: "Play video" },
+      { value: "mp3", label: "Save as MP3" },
+      { value: "video-144p", label: "Save as 144p video" },
+      { value: "video-240p", label: "Save as 240p video" },
+      { value: "video-360p", label: "Save as 360p video" },
+      { value: "video-720p", label: "Save as 720p video" },
+      { value: "video-1080p", label: "Save as 1080p video" },
       {
         value: "direct-audio",
-        label: "Quick audio save (uses your phone data)",
+        label: "Quick audio save (phone data)",
         androidNativeOnly: true,
       },
       {
         value: "direct-video",
-        label: "Quick video save (uses your phone data)",
+        label: "Quick video save (phone data)",
         androidNativeOnly: true,
       },
     ],
@@ -232,6 +256,7 @@ function loadSettings(): Settings {
     // it to a current preset so the UI stays consistent and the tap
     // handler doesn't fall through to its default branch.
     const merged: Settings = { ...DEFAULT_SETTINGS, ...parsed };
+    merged.theme = normalizeTheme(merged.theme);
     merged.searchPreset = normalizeSearchPreset(merged.searchPreset);
     return merged;
   } catch {
@@ -279,6 +304,18 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
     persistSettings(settings);
   }, [settings, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated || typeof document === "undefined") {
+      return;
+    }
+    const t = settings.theme;
+    if (t === "pepinho") {
+      document.documentElement.removeAttribute("data-theme");
+    } else {
+      document.documentElement.setAttribute("data-theme", t);
+    }
+  }, [hydrated, settings.theme]);
 
   const update = useCallback(
     <K extends keyof Settings>(key: K, value: Settings[K]) => {
