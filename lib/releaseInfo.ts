@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.5";
+export const APP_RELEASE_VERSION = "1.1.6";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,13 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.6",
+    title: "May 2026",
+    items: [
+      "Android APK: library playback from older saves no longer forces a video surface when the file is audio (manifest repair + correct MIME on blob URLs). Library videos open in Audio mode first so the screen can stay off — tap Video mode to watch.",
+    ],
+  },
   {
     version: "1.1.5",
     title: "May 2026",

@@ -145,10 +145,15 @@ function normalizeManifest(raw: Partial<Manifest> | null | undefined): Manifest 
     });
   }
 
+  const rawItems = Array.isArray(raw.items) ? raw.items : [];
+  const items = rawItems
+    .map((entry) => sanitizeManifestItem(entry as Partial<ManifestItem>))
+    .filter((entry): entry is ManifestItem => entry !== null);
+
   return {
     version: typeof raw.version === "number" ? raw.version : MANIFEST_VERSION,
     folders,
-    items: Array.isArray(raw.items) ? raw.items : [],
+    items,
   };
 }
 
@@ -204,6 +209,47 @@ function generateId(): string {
 
 function inferTypeFromFormat(format: "mp3" | "mp4"): ItemType {
   return format === "mp3" ? "audio" : "video";
+}
+
+/**
+ * Older manifests (or hand-edited JSON) sometimes had `type` out of sync
+ * with `format` (e.g. mp3 labeled as video). That forced a <video> element
+ * in the player; on Android WebView, video often pauses when the screen
+ * locks even when the user expects audio. Repair type from format.
+ */
+function sanitizeManifestItem(
+  raw: Partial<ManifestItem> & Record<string, unknown>,
+): ManifestItem | null {
+  if (typeof raw.id !== "string" || typeof raw.fileName !== "string") {
+    return null;
+  }
+  const format: "mp3" | "mp4" =
+    raw.format === "mp3" || raw.format === "mp4" ? raw.format : "mp4";
+  let type: ItemType =
+    raw.type === "audio" || raw.type === "video" ? raw.type : inferTypeFromFormat(format);
+  if (format === "mp3" && type === "video") {
+    type = "audio";
+  }
+  if (format === "mp4" && type !== "audio" && type !== "video") {
+    type = "video";
+  }
+
+  return {
+    id: raw.id,
+    fileName: raw.fileName,
+    folderId: typeof raw.folderId === "string" ? raw.folderId : DEFAULT_FOLDER_ID,
+    title: typeof raw.title === "string" ? raw.title : "Untitled",
+    sourceUrl: typeof raw.sourceUrl === "string" ? raw.sourceUrl : "",
+    format,
+    quality: typeof raw.quality === "string" ? raw.quality : "",
+    type,
+    duration: typeof raw.duration === "number" ? raw.duration : null,
+    fileSize: typeof raw.fileSize === "number" ? raw.fileSize : 0,
+    thumbnail: typeof raw.thumbnail === "string" ? raw.thumbnail : undefined,
+    author: typeof raw.author === "string" ? raw.author : undefined,
+    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+    missing: raw.missing === true ? true : undefined,
+  };
 }
 
 function fileExtForFormat(format: "mp3" | "mp4"): string {
@@ -436,7 +482,19 @@ export async function getItemObjectUrl(item: ManifestItem): Promise<string | nul
   if (!blob) {
     return null;
   }
-  return URL.createObjectURL(blob);
+  // OPFS files often have an empty `type`; Android WebView may treat an
+  // untyped blob URL like video and pause on screen lock. Pick a MIME from
+  // manifest metadata when the file has no type.
+  const fallbackMime =
+    item.format === "mp3"
+      ? "audio/mpeg"
+      : item.type === "audio"
+        ? "audio/mp4"
+        : "video/mp4";
+  const mime =
+    typeof blob.type === "string" && blob.type.trim() !== "" ? blob.type : fallbackMime;
+  const forUrl = blob.type === mime ? blob : blob.slice(0, blob.size, mime);
+  return URL.createObjectURL(forUrl);
 }
 
 export async function exportManifest(): Promise<string> {

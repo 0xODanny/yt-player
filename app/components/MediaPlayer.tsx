@@ -125,16 +125,11 @@ export function MediaPlayer({
   const [audioOnly, setAudioOnly] = useState<boolean>(false);
   const [isPip, setIsPip] = useState(false);
   const [pipAvailable, setPipAvailable] = useState<boolean>(false);
-  const [androidNative, setAndroidNative] = useState(false);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
   const onLibraryEndedRef = useRef(onLibraryPlaybackEnded);
   const wasPlayingBeforeBackgroundRef = useRef(false);
   onLibraryEndedRef.current = onLibraryPlaybackEnded;
-
-  useEffect(() => {
-    setAndroidNative(isAndroidNative());
-  }, []);
 
   // Whichever source is set drives the player. `stream` wins if both are
   // provided, but in practice callers pass exactly one.
@@ -160,17 +155,22 @@ export function MediaPlayer({
         }
       : null;
 
-  // Sync the per-session audio-only with the user's preferred default
-  // each time a new playable opens. We only react to id changes, not to
-  // settings.audioOnlyDefault changes mid-session, so the user can flip
-  // modes inside the player without being yanked back.
+  // Sync the per-session audio-only each time a new playable opens.
+  // On Android APK, library *video* files default to audio-only so we use
+  // an <audio> element first — WebView often pauses <video> on blob URLs
+  // when the screen locks. Streams still follow the global default only.
   useEffect(() => {
     if (!playable) {
       return;
     }
-    setAudioOnly(settings.audioOnlyDefault);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playable?.id]);
+    const libraryVideoAndroid =
+      isAndroidNative() &&
+      playable.kind === "library" &&
+      playable.type === "video";
+    setAudioOnly(
+      libraryVideoAndroid ? true : settings.audioOnlyDefault,
+    );
+  }, [playable?.id, settings.audioOnlyDefault, playable?.kind, playable?.type]);
 
   // Audio elements always play with screen off; video elements get
   // suspended on most platforms when the screen locks. So when source is
@@ -785,7 +785,7 @@ export function MediaPlayer({
                     ? "Switch to audio-only or use PiP for screen-off playback"
                     : "Switch to audio-only for screen-off playback"
               : "Plays with screen off · lock-screen controls available"}
-            {androidNative && playable.type === "video" && !audioOnly
+            {isAndroidNative() && playable.type === "video" && !audioOnly
               ? " On Android, use Audio-only or press Home — swiping the app away can stop playback on some phones."
               : null}
           </span>
