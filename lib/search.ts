@@ -174,3 +174,31 @@ export function formatLength(seconds: number | undefined): string | null {
 export function youtubeWatchUrl(videoId: string): string {
   return `https://www.youtube.com/watch?v=${videoId}`;
 }
+
+/**
+ * Extract YouTube video id from a saved library `sourceUrl` (watch URL,
+ * youtu.be, etc.). Used to mark search results already in the library.
+ */
+export function videoIdFromSourceUrl(sourceUrl: string | undefined | null): string | null {
+  if (!sourceUrl || typeof sourceUrl !== "string") {
+    return null;
+  }
+  try {
+    const url = new URL(sourceUrl);
+    if (url.hostname === "youtu.be") {
+      const id = url.pathname.replace(/^\//, "").trim();
+      return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+    }
+    if (
+      url.hostname === "www.youtube.com" ||
+      url.hostname === "youtube.com" ||
+      url.hostname === "m.youtube.com"
+    ) {
+      const v = url.searchParams.get("v");
+      return v && /^[A-Za-z0-9_-]{11}$/.test(v) ? v : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}

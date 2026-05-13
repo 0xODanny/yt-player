@@ -9,6 +9,7 @@ import {
   type JobPayload,
   type JobStatusResponse,
 } from "@/lib/apiClient";
+import { hapticLibrarySaveFailure, hapticLibrarySaveSuccess } from "@/lib/haptics";
 import {
   clearAllInflight,
   clearInflight,
@@ -115,6 +116,8 @@ function saveRecentSearches(queries: string[]) {
 
 type SearchViewProps = {
   onLibraryChanged: () => void;
+  /** YouTube video ids already saved anywhere in the library (any folder). */
+  libraryVideoIds?: ReadonlySet<string>;
 };
 
 type DownloadState = {
@@ -129,6 +132,11 @@ type DownloadState = {
     | "failed"
     | "cancelled";
   progress: number;
+  /**
+   * When true, show an indeterminate bar (unknown total bytes on native
+   * stream save, or worker still at ~0–1% progress).
+   */
+  progressIndeterminate?: boolean;
   message?: string;
 };
 
@@ -234,13 +242,17 @@ const PRESET_OPTIONS: PresetOption[] = [
   { value: "direct-video", label: "⇣ Video (phone data)", androidNativeOnly: true },
 ];
 
-export function SearchView({ onLibraryChanged }: SearchViewProps) {
+export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProps) {
   const { settings, update } = useSettings();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [download, setDownload] = useState<DownloadState | null>(null);
+  /** Video ids saved to the library during this browser session (Search tab). */
+  const [sessionSavedVideoIds, setSessionSavedVideoIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [autoPlayItem, setAutoPlayItem] = useState<ManifestItem | null>(null);
   const [autoPlayStream, setAutoPlayStream] = useState<StreamSource | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
@@ -263,6 +275,22 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   // download (Capacitor doesn't expose true cancellation but we can
   // at least stop reporting progress and discard the staged file).
   const nativeAbortRef = useRef<AbortController | null>(null);
+  /** Latest search results for the worker-job persist path (avoid stale closures + keep poll effect deps stable). */
+  const resultsRef = useRef(results);
+  resultsRef.current = results;
+  /**
+   * Bumped when the user cancels so the job-polling effect tears down its
+   * interval even though jobId stays set on the cancelled download object.
+   */
+  const [pollGuardEpoch, setPollGuardEpoch] = useState(0);
+  /** ytsearch limit (20, 40, 60…). Reset to 20 on each fresh search submit. */
+  const [searchFetchLimit, setSearchFetchLimit] = useState(20);
+  /**
+   * While a search is in flight, how many skeleton rows to show (matches the
+   * requested API limit). Cleared when the request finishes so we never flash
+   * an empty list — previous results stay in state until replaced.
+   */
+  const [searchSkeletonRows, setSearchSkeletonRows] = useState<number | null>(null);
 
   useEffect(() => {
     const native = isAndroidNative();
@@ -288,6 +316,8 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   );
 
   const preset = settings.searchPreset;
+  const presetRef = useRef(preset);
+  presetRef.current = preset;
 
   // Restore persisted state on mount so iOS PWA restarts don't blank
   // out the user's search.
@@ -296,6 +326,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
     if (persisted) {
       setQuery(persisted.query);
       setResults(persisted.results);
+      setSearchFetchLimit(Math.max(20, persisted.results.length));
     }
     setRecentSearches(loadRecentSearches());
   }, []);
@@ -354,6 +385,8 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
       }
     }
 
+    setPollGuardEpoch((epoch) => epoch + 1);
+
     setDownload((current) =>
       current
         ? {
@@ -366,11 +399,12 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
   }, [download?.jobId]);
 
   const runSearch = useCallback(
-    async (q: string) => {
+    async (q: string, limit: number) => {
       const trimmed = q.trim();
       if (!trimmed) {
         setResults([]);
         setSearchError(null);
+        setSearchSkeletonRows(null);
         return;
       }
 
@@ -378,11 +412,15 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
       const controller = new AbortController();
       abortRef.current = controller;
 
+      setSearchSkeletonRows(limit);
       setSearching(true);
       setSearchError(null);
 
       try {
-        const found = await searchVideos(trimmed, { signal: controller.signal });
+        const found = await searchVideos(trimmed, {
+          signal: controller.signal,
+          limit,
+        });
         if (!controller.signal.aborted) {
           setResults(found);
           if (found.length > 0) {
@@ -398,10 +436,11 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
             ? `Couldn't search: ${error.message}`
             : "Couldn't search. Try again in a moment.",
         );
-        setResults([]);
+        // Keep prior results so the list never blanks mid-query.
       } finally {
         if (!controller.signal.aborted) {
           setSearching(false);
+          setSearchSkeletonRows(null);
         }
       }
     },
@@ -410,10 +449,19 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void runSearch(query);
+    setSearchFetchLimit(20);
+    void runSearch(query, 20);
   }
 
-  // When a download is in flight, poll the worker every 1.5s for status.
+  // When a download is in flight, poll the worker for status.
+  // IMPORTANT: `download.status` must NOT be in the dependency array.
+  // When the worker flips to complete we set status to "saving" and then
+  // await fetch()+blob()+addItem(). If status were a dep, React would tear
+  // this effect down mid-await, set cancelled=true, and the completion
+  // handler would never run — leaving the UI stuck on "Saving…" even
+  // though the file already landed in the library.
+  //
+  // First poll runs immediately, a second at ~450ms, then every 1200ms.
   useEffect(() => {
     if (!download?.jobId) {
       return;
@@ -421,7 +469,6 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
     if (
       download.status === "complete" ||
       download.status === "failed" ||
-      download.status === "saving" ||
       download.status === "cancelled"
     ) {
       return;
@@ -429,106 +476,168 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
 
     const jobId = download.jobId;
     const videoId = download.videoId;
-    let cancelled = false;
+    let intervalId: number | null = null;
+    let fastPollTimer: number | null = null;
+    let persistInFlight = false;
+
+    const clearTimer = () => {
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+        intervalId = null;
+      }
+      if (fastPollTimer !== null) {
+        window.clearTimeout(fastPollTimer);
+        fastPollTimer = null;
+      }
+    };
 
     async function poll() {
+      if (persistInFlight) {
+        return;
+      }
       try {
         const { response, data } = await getJob(jobId);
-        if (cancelled) {
-          return;
-        }
         if (!response.ok || "error" in data) {
           const message = "error" in data ? data.error : undefined;
+          void hapticLibrarySaveFailure();
           setDownload((current) =>
             current && current.jobId === jobId
-              ? { ...current, status: "failed", message: message ?? "Couldn't complete the download." }
+              ? {
+                  ...current,
+                  status: "failed",
+                  message: message ?? "Couldn't complete the download.",
+                  progressIndeterminate: false,
+                }
               : current,
           );
+          clearTimer();
           return;
         }
         const next = data as JobStatusResponse;
-        setDownload((current) =>
-          current && current.jobId === jobId
-            ? {
-                ...current,
-                status:
-                  next.status === "complete"
-                    ? "saving"
-                    : next.status === "failed"
-                      ? "failed"
-                      : next.status === "queued"
-                        ? "queued"
-                        : "processing",
-                progress: typeof next.progress === "number" ? next.progress : current.progress,
-                message: next.message,
-              }
-            : current,
-        );
 
         if (next.status === "complete" && next.downloadUrl) {
-          // Move into "saving" state and fetch the file into the library.
+          if (persistInFlight) {
+            return;
+          }
+          persistInFlight = true;
+          clearTimer();
+
+          setDownload((current) =>
+            current && current.jobId === jobId
+              ? {
+                  ...current,
+                  status: "saving",
+                  progress: 99,
+                  progressIndeterminate: true,
+                  message: "Saving to library…",
+                }
+              : current,
+          );
+
           try {
             const fileResponse = await fetch(next.downloadUrl);
             if (!fileResponse.ok) {
               throw new Error(`Download failed (${fileResponse.status})`);
             }
             const blob = await fileResponse.blob();
-            const result = results.find((r) => r.videoId === videoId);
-            const { format } = presetToJobPayload(preset);
+            const result = resultsRef.current.find((r) => r.videoId === videoId);
+            const { format } = presetToJobPayload(presetRef.current);
             const item = await addItem({
               blob,
               title: next.metadata?.title || result?.title || "Untitled",
               sourceUrl: youtubeWatchUrl(videoId),
               format,
-              quality: presetLabel(preset),
+              quality: presetLabel(presetRef.current),
               duration: next.metadata?.duration ?? result?.lengthSeconds ?? null,
-              thumbnail: next.metadata?.thumbnail || pickThumbnail(result?.thumbnails ?? [], 480)?.url,
+              thumbnail:
+                next.metadata?.thumbnail ||
+                pickThumbnail(result?.thumbnails ?? [], 480)?.url,
               author: next.metadata?.author || result?.author,
             });
-            if (!cancelled) {
-              setDownload((current) =>
-                current && current.jobId === jobId
-                  ? { ...current, status: "complete", progress: 100 }
-                  : current,
-              );
-              setAutoPlayItem(item);
-              onLibraryChanged();
-            }
+            setDownload((current) =>
+              current && current.jobId === jobId
+                ? {
+                    ...current,
+                    status: "complete",
+                    progress: 100,
+                    progressIndeterminate: false,
+                    message: undefined,
+                  }
+                : current,
+            );
+            setAutoPlayItem(item);
+            onLibraryChanged();
+            setSessionSavedVideoIds((prev) => new Set(prev).add(videoId));
+            void hapticLibrarySaveSuccess();
           } catch (error) {
-            if (!cancelled) {
-              setDownload((current) =>
-                current && current.jobId === jobId
-                  ? {
-                      ...current,
-                      status: "failed",
-                      message:
-                        error instanceof Error
-                          ? `Couldn't save: ${error.message}`
-                          : "Couldn't save the file.",
-                    }
-                  : current,
-              );
-            }
+            void hapticLibrarySaveFailure();
+            setDownload((current) =>
+              current && current.jobId === jobId
+                ? {
+                    ...current,
+                    status: "failed",
+                    progressIndeterminate: false,
+                    message:
+                      error instanceof Error
+                        ? `Couldn't save: ${error.message}`
+                        : "Couldn't save the file.",
+                  }
+                : current,
+            );
           }
+          return;
+        }
+
+        setDownload((current) => {
+          if (!current || current.jobId !== jobId) {
+            return current;
+          }
+          const nextProgress =
+            typeof next.progress === "number" ? next.progress : current.progress;
+          const progressIndeterminate =
+            next.status === "queued" ||
+            (next.status === "processing" && nextProgress <= 1);
+          return {
+            ...current,
+            status:
+              next.status === "failed"
+                ? "failed"
+                : next.status === "queued"
+                  ? "queued"
+                  : "processing",
+            progress: nextProgress,
+            progressIndeterminate,
+            message: next.message,
+          };
+        });
+
+        if (next.status === "failed") {
+          void hapticLibrarySaveFailure();
+          clearTimer();
         }
       } catch {
-        if (!cancelled) {
-          setDownload((current) =>
-            current && current.jobId === jobId
-              ? { ...current, status: "failed", message: "Network error." }
-              : current,
-          );
-        }
+        void hapticLibrarySaveFailure();
+        setDownload((current) =>
+          current && current.jobId === jobId
+            ? {
+                ...current,
+                status: "failed",
+                message: "Network error.",
+                progressIndeterminate: false,
+              }
+            : current,
+        );
+        clearTimer();
       }
     }
 
     void poll();
-    const timer = window.setInterval(() => void poll(), 1500);
+    fastPollTimer = window.setTimeout(() => void poll(), 450);
+    intervalId = window.setInterval(() => void poll(), 1200);
     return () => {
-      cancelled = true;
-      window.clearInterval(timer);
+      clearTimer();
     };
-  }, [download?.jobId, download?.status, download?.videoId, results, preset, onLibraryChanged]);
+  }, [download?.jobId, download?.videoId, pollGuardEpoch, onLibraryChanged]);
 
   /**
    * Run the Android-native direct-download flow for a video.
@@ -576,6 +685,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
         videoId: opts.videoId,
         status: "queued",
         progress: 0,
+        progressIndeterminate: true,
         message: "Getting ready…",
       });
 
@@ -592,6 +702,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
           videoId: opts.videoId,
           status: "processing",
           progress: 0,
+          progressIndeterminate: true,
           message: "Downloading…",
         });
 
@@ -610,14 +721,30 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
               mimeHint: mime,
               signal: controller.signal,
               onProgress: ({ loaded, total }) => {
-                const pct = total
-                  ? Math.max(2, Math.min(99, Math.round((loaded / total) * 100)))
-                  : Math.min(99, Math.round(loaded / (1024 * 1024)));
-                setDownload((current) =>
-                  current && current.videoId === opts.videoId
-                    ? { ...current, status: "processing", progress: pct }
-                    : current,
-                );
+                const knownTotal = total != null && total > 0;
+                setDownload((current) => {
+                  if (!current || current.videoId !== opts.videoId) {
+                    return current;
+                  }
+                  if (knownTotal) {
+                    const pct = Math.max(
+                      2,
+                      Math.min(99, Math.round((loaded / total) * 100)),
+                    );
+                    return {
+                      ...current,
+                      status: "processing",
+                      progress: pct,
+                      progressIndeterminate: false,
+                    };
+                  }
+                  return {
+                    ...current,
+                    status: "processing",
+                    progress: 0,
+                    progressIndeterminate: true,
+                  };
+                });
               },
             }),
         });
@@ -628,7 +755,13 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
 
         setDownload((current) =>
           current && current.videoId === opts.videoId
-            ? { ...current, status: "saving", progress: 99 }
+            ? {
+                ...current,
+                status: "processing",
+                progress: 99,
+                progressIndeterminate: true,
+                message: "Finishing…",
+              }
             : current,
         );
 
@@ -636,19 +769,24 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
           videoId: opts.videoId,
           status: "complete",
           progress: 100,
+          progressIndeterminate: false,
         });
         setAutoPlayItem(item);
         onLibraryChanged();
+        setSessionSavedVideoIds((prev) => new Set(prev).add(opts.videoId));
+        void hapticLibrarySaveSuccess();
       } catch (error) {
         if ((error as Error).name === "AbortError") {
           // Cancellation was user-initiated; the cancel handler has
           // already flipped `download` to "cancelled". Leave it.
           return;
         }
+        void hapticLibrarySaveFailure();
         setDownload({
           videoId: opts.videoId,
           status: "failed",
           progress: 0,
+          progressIndeterminate: false,
           message:
             error instanceof Error
               ? `Couldn't download: ${error.message}`
@@ -827,6 +965,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
         videoId: result.videoId,
         status: "queued",
         progress: 0,
+        progressIndeterminate: true,
       });
 
       const { format, quality } = presetToJobPayload(preset);
@@ -848,6 +987,7 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
           jobId: (data as { id: string }).id,
           status: "queued",
           progress: 0,
+          progressIndeterminate: true,
         });
       } catch (error) {
         setDownload({
@@ -988,6 +1128,9 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
                 className="input-clear"
                 onClick={() => {
                   setQuery("");
+                  abortRef.current?.abort();
+                  setSearching(false);
+                  setSearchSkeletonRows(null);
                   setResults([]);
                 }}
                 aria-label="Clear search"
@@ -1054,7 +1197,8 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
                   className="recent-search-chip"
                   onClick={() => {
                     setQuery(q);
-                    void runSearch(q);
+                    setSearchFetchLimit(20);
+                    void runSearch(q, 20);
                   }}
                   title={`Search "${q}" again`}
                 >
@@ -1066,7 +1210,31 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
         </section>
       ) : null}
 
-      {results.length > 0 ? (
+      {searching && query.trim() && searchSkeletonRows !== null ? (
+        <section className="panel" aria-busy="true" aria-live="polite">
+          <div className="section-heading">
+            <h2>Results</h2>
+            <span className="job-id muted-text">Searching…</span>
+          </div>
+          <ul className="search-list">
+            {Array.from({ length: searchSkeletonRows }, (_, i) => (
+              <li
+                key={`search-sk-${i}`}
+                className="search-item search-item-skeleton"
+                aria-hidden
+              >
+                <div className="search-row search-row-skeleton">
+                  <span className="search-thumb search-skeleton-thumb" />
+                  <span className="search-meta search-skeleton-meta">
+                    <span className="search-skeleton-line search-skeleton-title" />
+                    <span className="search-skeleton-line search-skeleton-sub" />
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : results.length > 0 ? (
         <section className="panel">
           <div className="section-heading">
             <h2>Results</h2>
@@ -1089,12 +1257,17 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
                 !isTerminal;
               const isDownloading = isThis && !isTerminal;
               const progress = isThis ? Math.round(download?.progress ?? 0) : 0;
+              const progressIndeterminate = Boolean(
+                isThis && download?.progressIndeterminate,
+              );
               const stateLabel =
                 isThis &&
                 (download?.status === "queued"
                   ? "Starting…"
                   : download?.status === "processing"
-                    ? `Downloading ${progress}%`
+                    ? progressIndeterminate
+                      ? "Downloading…"
+                      : `Downloading ${progress}%`
                     : download?.status === "saving"
                       ? "Saving…"
                       : download?.status === "streaming"
@@ -1149,7 +1322,14 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
                       <span className="search-duration">{length}</span>
                     ) : null}
                     <span className="search-meta">
-                      <span className="search-title">{result.title}</span>
+                      <span className="search-title">
+                        {result.title}
+                        {libraryVideoIds?.has(result.videoId) ? (
+                          <span className="search-in-library">In library</span>
+                        ) : sessionSavedVideoIds.has(result.videoId) ? (
+                          <span className="search-session-saved">Added this session</span>
+                        ) : null}
+                      </span>
                       <span className="search-sub">
                         {result.author}
                         {views ? ` · ${views}` : ""}
@@ -1158,7 +1338,14 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
                       {isThis ? (
                         <span className={`search-state state-${download?.status}`}>
                           {stateLabel}
-                          {isDownloading && progress > 0 ? (
+                          {isDownloading && progressIndeterminate ? (
+                            <span
+                              className="search-progress search-progress-indeterminate"
+                              aria-hidden
+                            >
+                              <span className="search-progress-fill" />
+                            </span>
+                          ) : isDownloading && progress > 0 && !progressIndeterminate ? (
                             <span className="search-progress">
                               <span
                                 className="search-progress-fill"
@@ -1177,6 +1364,26 @@ export function SearchView({ onLibraryChanged }: SearchViewProps) {
               );
             })}
           </ul>
+          {query.trim() &&
+          results.length > 0 &&
+          results.length >= searchFetchLimit &&
+          searchFetchLimit < 50 ? (
+            <div className="search-more-row">
+              <button
+                type="button"
+                className="link-button"
+                disabled={searching}
+                onClick={() => {
+                  const next = Math.min(50, searchFetchLimit + 20);
+                  setSearchFetchLimit(next);
+                  void runSearch(query.trim(), next);
+                }}
+              >
+                {searching ? "Loading…" : "Show more results"}
+              </button>
+              <span className="muted-text">Up to 50 per search</span>
+            </div>
+          ) : null}
         </section>
       ) : !searching && query.trim() && !searchError ? (
         <section className="panel">

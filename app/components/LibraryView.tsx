@@ -45,6 +45,10 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
   const [activeFolderId, setActiveFolderId] = useState<string>(DEFAULT_FOLDER_ID);
   const [storage, setStorage] = useState<StorageEstimate | null>(null);
   const [playingItem, setPlayingItem] = useState<ManifestItem | null>(null);
+  /** Per-folder playback: normal, loop entire folder order, or repeat current track. */
+  const [folderPlayMode, setFolderPlayMode] = useState<
+    "off" | "loop_folder" | "repeat_one"
+  >("off");
   const [movingItem, setMovingItem] = useState<ManifestItem | null>(null);
   const [busy, setBusy] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -81,6 +85,28 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
       .filter((item) => item.folderId === activeFolderId)
       .sort((a, b) => b.createdAt - a.createdAt);
   }, [manifest, activeFolderId]);
+
+  useEffect(() => {
+    setFolderPlayMode("off");
+  }, [activeFolderId]);
+
+  const repeatOneForPlayer = useMemo(
+    () =>
+      folderPlayMode === "repeat_one" ||
+      (folderPlayMode === "loop_folder" && items.length === 1),
+    [folderPlayMode, items.length],
+  );
+
+  const handleLibraryPlaybackEnded = useCallback(() => {
+    if (folderPlayMode !== "loop_folder" || items.length <= 1 || !playingItem) {
+      return;
+    }
+    const idx = items.findIndex((i) => i.id === playingItem.id);
+    if (idx < 0) {
+      return;
+    }
+    setPlayingItem(items[(idx + 1) % items.length] ?? null);
+  }, [folderPlayMode, items, playingItem]);
 
   const handleCreateFolder = useCallback(async () => {
     const name = window.prompt("Folder name");
@@ -412,6 +438,37 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
               </button>
             ) : null}
           </div>
+          <div className="folder-playback" role="group" aria-label="Folder playback">
+            <span className="folder-playback-label">Playback</span>
+            <button
+              type="button"
+              className={`folder-chip folder-playback-chip${folderPlayMode === "off" ? " active" : ""}`}
+              onClick={() => setFolderPlayMode("off")}
+              title="Play one track at a time"
+            >
+              Normal
+            </button>
+            <button
+              type="button"
+              className={`folder-chip folder-playback-chip${
+                folderPlayMode === "loop_folder" ? " active" : ""
+              }`}
+              onClick={() => setFolderPlayMode("loop_folder")}
+              title="When a track ends, play the next in this folder (wraps)"
+            >
+              Loop folder
+            </button>
+            <button
+              type="button"
+              className={`folder-chip folder-playback-chip${
+                folderPlayMode === "repeat_one" ? " active" : ""
+              }`}
+              onClick={() => setFolderPlayMode("repeat_one")}
+              title="Repeat the current track"
+            >
+              Repeat one
+            </button>
+          </div>
         </div>
 
         {items.length === 0 ? (
@@ -517,7 +574,16 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
         {importError ? <p className="hint hint-warning">{importError}</p> : null}
       </section>
 
-      <MediaPlayer item={playingItem} onClose={() => setPlayingItem(null)} />
+      <MediaPlayer
+        item={playingItem}
+        repeatOne={repeatOneForPlayer}
+        onLibraryPlaybackEnded={
+          folderPlayMode === "loop_folder" && items.length > 1
+            ? handleLibraryPlaybackEnded
+            : undefined
+        }
+        onClose={() => setPlayingItem(null)}
+      />
 
       {movingItem ? (
         <div

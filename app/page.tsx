@@ -10,12 +10,15 @@ import {
   type JobResponse,
   type JobStatusResponse,
 } from "@/lib/apiClient";
+import { hapticLibrarySaveFailure, hapticLibrarySaveSuccess } from "@/lib/haptics";
 import {
   addItem,
   isLibrarySupported,
+  loadManifest,
   requestPersistentStorage,
 } from "@/lib/library";
 import { useSettings } from "@/lib/settings";
+import { videoIdFromSourceUrl } from "@/lib/search";
 
 import { LibraryView } from "./components/LibraryView";
 import { SearchView } from "./components/SearchView";
@@ -274,6 +277,7 @@ export default function HomePage() {
   >("idle");
   const [librarySaveError, setLibrarySaveError] = useState<string | null>(null);
   const [libraryReloadKey, setLibraryReloadKey] = useState(0);
+  const [libraryVideoIds, setLibraryVideoIds] = useState<Set<string>>(() => new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pasteHint, setPasteHint] = useState<string | null>(null);
   const autoSavedJobIds = useRef<Set<string>>(new Set());
@@ -291,6 +295,30 @@ export default function HomePage() {
     }
     void requestPersistentStorage();
   }, []);
+
+  useEffect(() => {
+    if (!isLibrarySupported()) {
+      setLibraryVideoIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    void loadManifest().then((manifest) => {
+      if (cancelled) {
+        return;
+      }
+      const ids = new Set<string>();
+      for (const item of manifest.items) {
+        const id = videoIdFromSourceUrl(item.sourceUrl);
+        if (id) {
+          ids.add(id);
+        }
+      }
+      setLibraryVideoIds(ids);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [libraryReloadKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -439,6 +467,7 @@ export default function HomePage() {
 
     const jobId = job.id;
     let isCancelled = false;
+    let fastPollTimer: number | null = null;
 
     async function refreshJobStatus() {
       try {
@@ -489,13 +518,19 @@ export default function HomePage() {
     }
 
     void refreshJobStatus();
+    fastPollTimer = window.setTimeout(() => {
+      void refreshJobStatus();
+    }, 450);
 
     const timerId = window.setInterval(() => {
       void refreshJobStatus();
-    }, 1500);
+    }, 1200);
 
     return () => {
       isCancelled = true;
+      if (fastPollTimer !== null) {
+        window.clearTimeout(fastPollTimer);
+      }
       window.clearInterval(timerId);
     };
   }, [job?.id, job?.status, url, format, quality, upsertRecentJob]);
@@ -548,6 +583,7 @@ export default function HomePage() {
         }
         setLibrarySaveStatus("saved");
         setLibraryReloadKey((current) => current + 1);
+        void hapticLibrarySaveSuccess();
       } catch (err) {
         if (cancelled) {
           return;
@@ -557,6 +593,7 @@ export default function HomePage() {
         setLibrarySaveError(
           err instanceof Error ? err.message : "Unknown error saving to library.",
         );
+        void hapticLibrarySaveFailure();
       }
     })();
 
@@ -698,6 +735,11 @@ export default function HomePage() {
   const metadataDuration = formatDuration(metadata?.duration);
   const showMetadataCard = hasVisibleMetadata(metadata);
   const progressPercent = Math.max(0, Math.min(100, job?.progress ?? 0));
+  const jobProgressIndeterminate = Boolean(
+    job &&
+      (job.status === "queued" ||
+        (job.status === "processing" && progressPercent <= 1)),
+  );
   const tone = statusToneClass(job?.status);
   const hasDownload = job?.status === "complete" && Boolean(job.downloadUrl);
 
@@ -742,7 +784,10 @@ export default function HomePage() {
             width={32}
             height={32}
           />
-          <span className="brand-text">Pepinho Player</span>
+          <span className="brand-text">
+            <span className="brand-word-pepinho">Pepinho </span>
+            <span className="brand-word-player">Player</span>
+          </span>
         </div>
         <div className="topbar-meta">
           <span className={`status-dot ${isOnline ? "online" : "offline"}`} aria-hidden />
@@ -829,6 +874,7 @@ export default function HomePage() {
 
       {tab === "search" ? (
         <SearchView
+          libraryVideoIds={libraryVideoIds}
           onLibraryChanged={() => setLibraryReloadKey((current) => current + 1)}
         />
       ) : null}
@@ -950,18 +996,27 @@ export default function HomePage() {
             <div className={`status-card ${tone}`}>
               <div className="status-row">
                 <strong>{statusLabel(job.status)}</strong>
-                <span className="status-percent">{progressPercent}%</span>
+                <span className="status-percent">
+                  {jobProgressIndeterminate ? "…" : `${progressPercent}%`}
+                </span>
               </div>
               <div
-                className="progress"
+                className={`progress${jobProgressIndeterminate ? " progress-indeterminate" : ""}`}
                 role="progressbar"
-                aria-valuenow={progressPercent}
+                aria-valuenow={jobProgressIndeterminate ? undefined : progressPercent}
                 aria-valuemin={0}
                 aria-valuemax={100}
+                aria-valuetext={
+                  jobProgressIndeterminate ? "Download in progress" : undefined
+                }
               >
                 <div
                   className={`progress-bar ${tone}`}
-                  style={{ width: `${progressPercent}%` }}
+                  style={
+                    jobProgressIndeterminate
+                      ? undefined
+                      : { width: `${progressPercent}%` }
+                  }
                 />
               </div>
               {job.message ? <p>{friendlyJobMessage(job.message, job.status)}</p> : null}

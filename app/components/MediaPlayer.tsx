@@ -26,6 +26,16 @@ type MediaPlayerProps = {
     thumbnail?: string;
   };
   onClose: () => void;
+  /**
+   * Library only: loop the current file on natural end (HTMLMediaElement.loop).
+   */
+  repeatOne?: boolean;
+  /**
+   * Library only: fired once when playback reaches natural end and
+   * `repeatOne` is false — used to advance to the next track in folder
+   * loop-all mode.
+   */
+  onLibraryPlaybackEnded?: () => void;
 };
 
 // iOS Safari doesn't implement the W3C Picture-in-Picture API. Instead it
@@ -97,7 +107,14 @@ async function exitPip(video: HTMLVideoElement): Promise<void> {
   }
 }
 
-export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerProps) {
+export function MediaPlayer({
+  item,
+  stream,
+  streamMeta,
+  onClose,
+  repeatOne = false,
+  onLibraryPlaybackEnded,
+}: MediaPlayerProps) {
   const { settings } = useSettings();
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +126,8 @@ export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerPr
   const [pipAvailable, setPipAvailable] = useState<boolean>(false);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
+  const onLibraryEndedRef = useRef(onLibraryPlaybackEnded);
+  onLibraryEndedRef.current = onLibraryPlaybackEnded;
 
   // Whichever source is set drives the player. `stream` wins if both are
   // provided, but in practice callers pass exactly one.
@@ -400,6 +419,13 @@ export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerPr
       } catch {
         // ignore
       }
+      if (
+        playable?.kind === "library" &&
+        !repeatOne &&
+        onLibraryEndedRef.current
+      ) {
+        onLibraryEndedRef.current();
+      }
     };
 
     const restorePosition = () => {
@@ -440,7 +466,7 @@ export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerPr
       el.removeEventListener("ended", onEnded);
       window.removeEventListener("pagehide", onPauseOrHide);
     };
-  }, [playable, objectUrl, useAudioElement]);
+  }, [playable, objectUrl, useAudioElement, repeatOne]);
 
   // Request a screen Wake Lock while audio is playing. The Wake Lock
   // API is a "screen" lock in the browser, which on Android also keeps
@@ -729,6 +755,7 @@ export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerPr
                   controls
                   autoPlay
                   preload="auto"
+                  loop={repeatOne}
                 />
               </div>
             ) : (
@@ -743,6 +770,7 @@ export function MediaPlayer({ item, stream, streamMeta, onClose }: MediaPlayerPr
                 autoPlay
                 playsInline
                 preload="auto"
+                loop={repeatOne}
               />
             )
           ) : null}

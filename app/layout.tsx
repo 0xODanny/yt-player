@@ -1,8 +1,16 @@
 import type { Metadata, Viewport } from "next";
+import { DM_Sans } from "next/font/google";
+
 import "./globals.css";
 import { SettingsProvider } from "@/lib/settings";
 import { ServiceWorkerRegistrar } from "./sw-register";
 import { ViewportLock } from "./viewport-lock";
+
+const brandDisplay = DM_Sans({
+  subsets: ["latin"],
+  weight: ["700", "800"],
+  variable: "--font-brand-display",
+});
 
 export const metadata: Metadata = {
   title: "Pepinho Player",
@@ -38,7 +46,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={brandDisplay.variable}>
       <body>
         <ServiceWorkerRegistrar />
         <ViewportLock />
