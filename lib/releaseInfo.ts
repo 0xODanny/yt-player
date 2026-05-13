@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.0";
+export const APP_RELEASE_VERSION = "1.1.1";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -20,6 +20,13 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.1",
+    title: "May 2026",
+    items: [
+      "New Tips (lightbulb) in the header: Samsung/Android battery steps so Pepinho isn’t auto-sleeped, plus playback and library hints.",
+    ],
+  },
   {
     version: "1.1.0",
     title: "May 2026",

@@ -23,6 +23,7 @@ import { videoIdFromSourceUrl } from "@/lib/search";
 import { LibraryView } from "./components/LibraryView";
 import { SearchView } from "./components/SearchView";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { TipsPanel } from "./components/TipsPanel";
 
 type FormatOption = "mp3" | "mp4";
 type QualityOption =
@@ -279,6 +280,7 @@ export default function HomePage() {
   const [libraryReloadKey, setLibraryReloadKey] = useState(0);
   const [libraryVideoIds, setLibraryVideoIds] = useState<Set<string>>(() => new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tipsOpen, setTipsOpen] = useState(false);
   const [pasteHint, setPasteHint] = useState<string | null>(null);
   const autoSavedJobIds = useRef<Set<string>>(new Set());
   const { settings } = useSettings();
@@ -817,6 +819,29 @@ export default function HomePage() {
           </button>
           <button
             type="button"
+            className="topbar-tips"
+            aria-label="Tips"
+            title="Tips — playback, battery, and library"
+            onClick={() => setTipsOpen(true)}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M9 18h6" />
+              <path d="M10 22h4" />
+              <path d="M12 2a7 7 0 0 0-4 12.7V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.3A7 7 0 0 0 12 2z" />
+            </svg>
+          </button>
+          <button
+            type="button"
             className="topbar-gear"
             aria-label="Settings"
             title="Settings"
@@ -841,6 +866,7 @@ export default function HomePage() {
       </header>
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <TipsPanel open={tipsOpen} onClose={() => setTipsOpen(false)} />
 
       <nav className="tab-bar" role="tablist" aria-label="Sections">
         <button
