@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.10";
+export const APP_RELEASE_VERSION = "1.1.11";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,15 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.11",
+    title: "May 2026",
+    items: [
+      "Stream player: fixed Audio-only / Video switching leaving event listeners on the wrong element (stuttery or silent playback). Progress updates are throttled so the UI doesn’t hammer the main thread (cooler laptops, smoother audio).",
+      "Stream video: retry play() shortly after open when autoplay is deferred (black 0:00 screen in some browsers). Removed the CDN disclaimer line under the scrubber.",
+      "Toolbar: Audio-only / PiP pills use primary text color; stream timecode uses body text color; buffering strip uses a light opacity pulse instead of sliding transforms.",
+    ],
+  },
   {
     version: "1.1.10",
     title: "May 2026",

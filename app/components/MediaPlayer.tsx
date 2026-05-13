@@ -156,6 +156,7 @@ export function MediaPlayer({
   });
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
+  const streamWaitingRef = useRef(false);
   const onLibraryEndedRef = useRef(onLibraryPlaybackEnded);
   const wasPlayingBeforeBackgroundRef = useRef(false);
   onLibraryEndedRef.current = onLibraryPlaybackEnded;
@@ -218,6 +219,7 @@ export function MediaPlayer({
     if (!el) {
       return;
     }
+    streamWaitingRef.current = false;
     const readMediaDuration = (media: HTMLMediaElement) => {
       const d = media.duration;
       if (Number.isFinite(d) && d > 0 && d !== Number.POSITIVE_INFINITY) {
@@ -245,51 +247,108 @@ export function MediaPlayer({
       }
       return 0;
     };
-    const sync = () => {
-      setDockProgress((prev) => ({
-        ...prev,
-        current: el.currentTime,
-        duration: readMediaDuration(el),
-        bufferedEnd: readBufferedEnd(el),
-        paused: el.paused,
-      }));
+
+    let lastTimeThrottle = 0;
+    const publish = () => {
+      setDockProgress((prev) => {
+        const next = {
+          current: el.currentTime,
+          duration: readMediaDuration(el),
+          bufferedEnd: readBufferedEnd(el),
+          paused: el.paused,
+          waiting: streamWaitingRef.current,
+        };
+        if (
+          Math.abs(prev.current - next.current) < 0.1 &&
+          prev.duration === next.duration &&
+          Math.abs(prev.bufferedEnd - next.bufferedEnd) < 0.25 &&
+          prev.paused === next.paused &&
+          prev.waiting === next.waiting
+        ) {
+          return prev;
+        }
+        return next;
+      });
     };
+
+    const publishThrottledFromClock = () => {
+      const now = performance.now();
+      if (now - lastTimeThrottle < 240) {
+        return;
+      }
+      lastTimeThrottle = now;
+      publish();
+    };
+
     const onWaiting = () => {
-      setDockProgress((prev) => ({ ...prev, waiting: true }));
+      streamWaitingRef.current = true;
+      publish();
     };
     const onPlaying = () => {
-      setDockProgress((prev) => ({ ...prev, waiting: false }));
+      streamWaitingRef.current = false;
+      publish();
     };
-    sync();
-    el.addEventListener("timeupdate", sync);
-    el.addEventListener("progress", sync);
-    el.addEventListener("loadedmetadata", sync);
-    el.addEventListener("loadeddata", sync);
-    el.addEventListener("canplay", sync);
-    el.addEventListener("canplaythrough", sync);
-    el.addEventListener("play", sync);
-    el.addEventListener("pause", sync);
-    el.addEventListener("seeking", sync);
-    el.addEventListener("seeked", sync);
+
+    publish();
+    el.addEventListener("timeupdate", publishThrottledFromClock);
+    el.addEventListener("progress", publishThrottledFromClock);
+    el.addEventListener("loadedmetadata", publish);
+    el.addEventListener("loadeddata", publish);
+    el.addEventListener("canplay", publish);
+    el.addEventListener("canplaythrough", publish);
+    el.addEventListener("play", publish);
+    el.addEventListener("pause", publish);
+    el.addEventListener("seeking", publish);
+    el.addEventListener("seeked", publish);
     el.addEventListener("waiting", onWaiting);
     el.addEventListener("playing", onPlaying);
-    const tick = window.setInterval(sync, 500);
+    const tick = window.setInterval(publish, 900);
     return () => {
       window.clearInterval(tick);
-      el.removeEventListener("timeupdate", sync);
-      el.removeEventListener("progress", sync);
-      el.removeEventListener("loadedmetadata", sync);
-      el.removeEventListener("loadeddata", sync);
-      el.removeEventListener("canplay", sync);
-      el.removeEventListener("canplaythrough", sync);
-      el.removeEventListener("play", sync);
-      el.removeEventListener("pause", sync);
-      el.removeEventListener("seeking", sync);
-      el.removeEventListener("seeked", sync);
+      el.removeEventListener("timeupdate", publishThrottledFromClock);
+      el.removeEventListener("progress", publishThrottledFromClock);
+      el.removeEventListener("loadedmetadata", publish);
+      el.removeEventListener("loadeddata", publish);
+      el.removeEventListener("canplay", publish);
+      el.removeEventListener("canplaythrough", publish);
+      el.removeEventListener("play", publish);
+      el.removeEventListener("pause", publish);
+      el.removeEventListener("seeking", publish);
+      el.removeEventListener("seeked", publish);
       el.removeEventListener("waiting", onWaiting);
       el.removeEventListener("playing", onPlaying);
     };
-  }, [item?.id, stream?.url, objectUrl, item, stream]);
+  }, [item?.id, stream?.url, objectUrl, item, stream, useAudioElement]);
+
+  // Some browsers defer autoplay on <video> until after layout (especially
+  // when controls are custom). One nudge after mount helps stream video
+  // start instead of sitting on a black first frame at 0:00.
+  useEffect(() => {
+    if (!playable || playable.kind !== "stream" || playable.type !== "video" || useAudioElement) {
+      return;
+    }
+    if (!objectUrl || layout !== "expanded") {
+      return;
+    }
+    const v = mediaRef.current;
+    if (!(v instanceof HTMLVideoElement)) {
+      return;
+    }
+    const id = window.setTimeout(() => {
+      if (v.paused && !v.ended) {
+        void v.play().catch(() => {});
+      }
+    }, 80);
+    return () => window.clearTimeout(id);
+  }, [
+    stream?.url,
+    item?.id,
+    useAudioElement,
+    objectUrl,
+    layout,
+    playable?.kind,
+    playable?.type,
+  ]);
 
   useEffect(() => {
     const has = item || stream;
@@ -919,9 +978,6 @@ export function MediaPlayer({
             />
           </div>
         </div>
-        <p className="player-stream-hint muted-text">
-          Playback loads from YouTube&apos;s CDN. We only fetch a small play link first—not the whole file through our server.
-        </p>
       </div>
     ) : null;
 
