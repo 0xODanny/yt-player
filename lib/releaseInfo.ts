@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.14";
+export const APP_RELEASE_VERSION = "1.1.15";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,13 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.15",
+    title: "May 2026",
+    items: [
+      "Playback: moved stream chrome + mini dock progress into separate React subtrees so ticking the scrubber no longer reconciles the <audio>/<video> parent every ~500 ms (that main-thread churn sounded like slightly slow or staggered playback). Stable callback refs for media nodes.",
+    ],
+  },
   {
     version: "1.1.14",
     title: "May 2026",

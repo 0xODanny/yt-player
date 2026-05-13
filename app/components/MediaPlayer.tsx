@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getItemObjectUrl, type ManifestItem } from "@/lib/library";
 import { isAndroidNative } from "@/lib/platform";
@@ -9,6 +9,11 @@ import { type StreamSource } from "@/lib/stream";
 import { MediaSession } from "@jofr/capacitor-media-session";
 
 import type { PlaybackLayout } from "@/lib/playback";
+
+import {
+  MinimizedProgressDock,
+  StreamExpandedProgressChrome,
+} from "./MediaPlayerProgress";
 
 /**
  * Either a saved library item (plays from OPFS via a blob URL) OR a live
@@ -113,20 +118,6 @@ async function exitPip(video: HTMLVideoElement): Promise<void> {
   }
 }
 
-function formatMediaClock(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) {
-    return "--:--";
-  }
-  const total = Math.floor(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) {
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  }
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
 export function MediaPlayer({
   item,
   stream,
@@ -147,16 +138,14 @@ export function MediaPlayer({
   const [audioOnly, setAudioOnly] = useState<boolean>(false);
   const [isPip, setIsPip] = useState(false);
   const [pipAvailable, setPipAvailable] = useState<boolean>(false);
-  const [dockProgress, setDockProgress] = useState({
-    current: 0,
-    duration: 0,
-    bufferedEnd: 0,
-    paused: true,
-    waiting: false,
-  });
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
-  const streamWaitingRef = useRef(false);
+  const mediaRef = useRef<HTMLMediaElement | null>(null);
+  const bindAudioRef = useCallback((node: HTMLAudioElement | null) => {
+    mediaRef.current = node;
+  }, []);
+  const bindVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    mediaRef.current = node;
+  }, []);
   const onLibraryEndedRef = useRef(onLibraryPlaybackEnded);
   const wasPlayingBeforeBackgroundRef = useRef(false);
   onLibraryEndedRef.current = onLibraryPlaybackEnded;
@@ -208,208 +197,6 @@ export function MediaPlayer({
   // of a <video>. iOS Safari and Android Chrome both happily play the
   // audio track of an mp4 via the <audio> tag.
   const useAudioElement = !!playable && (playable.type === "audio" || audioOnly);
-
-  /** Progress UI for dock + stream custom controls only.
-   *
-   * Library / OPFS files use the browser's native media controls when
-   * expanded. Subscribing here at high frequency caused constant React
-   * reconciliation that audibly glitched playback on Safari and Brave
-   * (WebKit-style engines). Streams always need our scrubber; the dock
-   * needs updates whenever the player is minimized.
-   *
-   * We avoid `timeupdate` entirely: during buffering some engines fire it
-   * at extreme rates, which still ran JS every tick even with a throttle and
-   * kept React hot (fan noise). Clock + buffer bar use a low fixed-rate
-   * interval while playing only; stall/play edge events are debounced. */
-  useEffect(() => {
-    const has = item || stream;
-    if (!has || !objectUrl) {
-      return;
-    }
-    const el = mediaRef.current;
-    if (!el) {
-      return;
-    }
-    const needsProgressPolling = Boolean(stream) || layout === "minimized";
-    if (!needsProgressPolling) {
-      return;
-    }
-    streamWaitingRef.current = false;
-    const readMediaDuration = (media: HTMLMediaElement) => {
-      const d = media.duration;
-      if (Number.isFinite(d) && d > 0 && d !== Number.POSITIVE_INFINITY) {
-        return d;
-      }
-      try {
-        if (media.seekable && media.seekable.length > 0) {
-          const end = media.seekable.end(media.seekable.length - 1);
-          if (Number.isFinite(end) && end > 0) {
-            return end;
-          }
-        }
-      } catch {
-        // seekable can throw before any data is present
-      }
-      return 0;
-    };
-    const readBufferedEnd = (media: HTMLMediaElement) => {
-      try {
-        if (media.buffered && media.buffered.length > 0) {
-          return media.buffered.end(media.buffered.length - 1);
-        }
-      } catch {
-        // ignore
-      }
-      return 0;
-    };
-
-    const merge = (prev: typeof dockProgress, next: typeof dockProgress) => {
-      if (
-        Math.abs(prev.current - next.current) < 0.1 &&
-        prev.duration === next.duration &&
-        Math.abs(prev.bufferedEnd - next.bufferedEnd) < 0.25 &&
-        prev.paused === next.paused &&
-        prev.waiting === next.waiting
-      ) {
-        return prev;
-      }
-      return next;
-    };
-
-    const publishImmediate = () => {
-      setDockProgress((prev) =>
-        merge(prev, {
-          current: el.currentTime,
-          duration: readMediaDuration(el),
-          bufferedEnd: readBufferedEnd(el),
-          paused: el.paused,
-          waiting: streamWaitingRef.current,
-        }),
-      );
-    };
-
-    const publishFromClock = () => {
-      startTransition(() => {
-        setDockProgress((prev) =>
-          merge(prev, {
-            current: el.currentTime,
-            duration: readMediaDuration(el),
-            bufferedEnd: readBufferedEnd(el),
-            paused: el.paused,
-            waiting: streamWaitingRef.current,
-          }),
-        );
-      });
-    };
-
-    let stallUiDebounce: number | undefined;
-    const publishStallDebounced = () => {
-      if (stallUiDebounce !== undefined) {
-        window.clearTimeout(stallUiDebounce);
-      }
-      stallUiDebounce = window.setTimeout(() => {
-        stallUiDebounce = undefined;
-        publishImmediate();
-      }, 160);
-    };
-
-    const onWaiting = () => {
-      streamWaitingRef.current = true;
-      publishStallDebounced();
-    };
-    const onPlaying = () => {
-      streamWaitingRef.current = false;
-      publishStallDebounced();
-    };
-
-    let seekUiDebounce: number | undefined;
-    const publishSeekDebounced = () => {
-      if (seekUiDebounce !== undefined) {
-        window.clearTimeout(seekUiDebounce);
-      }
-      seekUiDebounce = window.setTimeout(() => {
-        seekUiDebounce = undefined;
-        publishImmediate();
-      }, 80);
-    };
-
-    let loadDebounce: number | undefined;
-    const publishLoadDebounced = () => {
-      if (loadDebounce !== undefined) {
-        window.clearTimeout(loadDebounce);
-      }
-      loadDebounce = window.setTimeout(() => {
-        loadDebounce = undefined;
-        publishImmediate();
-      }, 140);
-    };
-
-    let playheadTick: number | undefined;
-    const startPlayheadTick = () => {
-      if (playheadTick !== undefined) {
-        return;
-      }
-      publishFromClock();
-      playheadTick = window.setInterval(publishFromClock, 480);
-    };
-    const stopPlayheadTick = () => {
-      if (playheadTick !== undefined) {
-        window.clearInterval(playheadTick);
-        playheadTick = undefined;
-      }
-    };
-
-    const onPlay = () => {
-      publishImmediate();
-      startPlayheadTick();
-    };
-    const onPause = () => {
-      publishImmediate();
-      stopPlayheadTick();
-    };
-    const onEnded = () => {
-      stopPlayheadTick();
-      publishImmediate();
-    };
-
-    publishImmediate();
-    if (!el.paused) {
-      startPlayheadTick();
-    }
-
-    el.addEventListener("loadedmetadata", publishImmediate);
-    el.addEventListener("loadeddata", publishLoadDebounced);
-    el.addEventListener("canplay", publishLoadDebounced);
-    el.addEventListener("canplaythrough", publishLoadDebounced);
-    el.addEventListener("play", onPlay);
-    el.addEventListener("pause", onPause);
-    el.addEventListener("ended", onEnded);
-    el.addEventListener("seeked", publishSeekDebounced);
-    el.addEventListener("waiting", onWaiting);
-    el.addEventListener("playing", onPlaying);
-    return () => {
-      stopPlayheadTick();
-      if (loadDebounce !== undefined) {
-        window.clearTimeout(loadDebounce);
-      }
-      if (stallUiDebounce !== undefined) {
-        window.clearTimeout(stallUiDebounce);
-      }
-      if (seekUiDebounce !== undefined) {
-        window.clearTimeout(seekUiDebounce);
-      }
-      el.removeEventListener("loadedmetadata", publishImmediate);
-      el.removeEventListener("loadeddata", publishLoadDebounced);
-      el.removeEventListener("canplay", publishLoadDebounced);
-      el.removeEventListener("canplaythrough", publishLoadDebounced);
-      el.removeEventListener("play", onPlay);
-      el.removeEventListener("pause", onPause);
-      el.removeEventListener("ended", onEnded);
-      el.removeEventListener("seeked", publishSeekDebounced);
-      el.removeEventListener("waiting", onWaiting);
-      el.removeEventListener("playing", onPlaying);
-    };
-  }, [item?.id, stream?.url, objectUrl, item, stream, useAudioElement, layout]);
 
   // Some browsers defer autoplay on <video> until after layout (especially
   // when controls are custom). One nudge after mount helps stream video
@@ -1004,79 +791,7 @@ export function MediaPlayer({
   const showPipButton = playable.type === "video" && !useAudioElement && pipAvailable;
   const isStreaming = playable.kind === "stream";
   const expanded = layout === "expanded";
-  const dur = dockProgress.duration;
-  const cur = dockProgress.current;
-  const buf = dockProgress.bufferedEnd;
-  const scrubMax = Math.max(0.001, dur || buf || cur);
-  const pct =
-    dur > 0
-      ? Math.min(100, (cur / dur) * 100)
-      : scrubMax > 0.001
-        ? Math.min(100, (cur / scrubMax) * 100)
-        : 0;
   const showNativeMediaControls = expanded && !isStreaming;
-
-  const streamExpandedChrome =
-    expanded && isStreaming ? (
-      <div className="player-stream-chrome">
-        {dockProgress.waiting && dur <= 0 ? (
-          <p className="player-stream-status" aria-live="polite">
-            Buffering…
-          </p>
-        ) : null}
-        <div className="player-stream-chrome-row">
-          <button
-            type="button"
-            className="player-stream-playpause"
-            aria-label={dockProgress.paused ? "Play" : "Pause"}
-            onClick={() => {
-              const el = mediaRef.current;
-              if (!el) {
-                return;
-              }
-              if (el.paused) {
-                void el.play();
-              } else {
-                el.pause();
-              }
-            }}
-          >
-            {dockProgress.paused ? (
-              <span className="player-dock-play-glyph" aria-hidden />
-            ) : (
-              <span className="player-dock-pause-glyph" aria-hidden />
-            )}
-          </button>
-          <span className="player-stream-time">
-            {formatMediaClock(cur)} / {dur > 0 ? formatMediaClock(dur) : buf > 0 ? formatMediaClock(buf) : "--:--"}
-          </span>
-          <div className="player-stream-scrub">
-            <div
-              className={`player-dock-track${dockProgress.waiting && dur <= 0 ? " player-dock-track--busy" : ""}`}
-              aria-hidden
-            >
-              <div className="player-dock-fill" style={{ width: `${pct}%` }} />
-            </div>
-            <input
-              type="range"
-              className="player-dock-range"
-              min={0}
-              max={scrubMax}
-              step="any"
-              value={Math.min(cur, scrubMax)}
-              aria-label="Seek"
-              onChange={(event) => {
-                const el = mediaRef.current;
-                const next = Number(event.target.value);
-                if (el && Number.isFinite(next)) {
-                  el.currentTime = next;
-                }
-              }}
-            />
-          </div>
-        </div>
-      </div>
-    ) : null;
 
   return (
     <>
@@ -1185,9 +900,7 @@ export function MediaPlayer({
                   )}
                   <audio
                     key={`${objectUrl}-audio`}
-                    ref={(node) => {
-                      mediaRef.current = node;
-                    }}
+                    ref={bindAudioRef}
                     className={`player-audio${isStreaming ? " player-audio--stream" : ""}`}
                     src={objectUrl}
                     controls={showNativeMediaControls}
@@ -1195,15 +908,20 @@ export function MediaPlayer({
                     preload="auto"
                     loop={repeatOne}
                   />
-                  {streamExpandedChrome}
+                  {expanded && isStreaming ? (
+                    <StreamExpandedProgressChrome
+                      mediaRef={mediaRef}
+                      objectUrl={objectUrl}
+                      streamUrl={stream?.url ?? ""}
+                      useAudioElement={useAudioElement}
+                    />
+                  ) : null}
                 </div>
               ) : (
                 <div className={isStreaming ? "player-stream-video-shell" : undefined}>
                   <video
                     key={`${objectUrl}-video`}
-                    ref={(node) => {
-                      mediaRef.current = node;
-                    }}
+                    ref={bindVideoRef}
                     className={`player-video${isStreaming ? " player-video--stream" : ""}`}
                     src={objectUrl}
                     controls={showNativeMediaControls}
@@ -1212,7 +930,14 @@ export function MediaPlayer({
                     preload="auto"
                     loop={repeatOne}
                   />
-                  {streamExpandedChrome}
+                  {expanded && isStreaming ? (
+                    <StreamExpandedProgressChrome
+                      mediaRef={mediaRef}
+                      objectUrl={objectUrl}
+                      streamUrl={stream?.url ?? ""}
+                      useAudioElement={useAudioElement}
+                    />
+                  ) : null}
                 </div>
               )
             ) : null}
@@ -1220,86 +945,19 @@ export function MediaPlayer({
         </div>
       </div>
 
-      {layout === "minimized" ? (
-        <div className="player-dock" role="region" aria-label={`Now playing: ${playable.title}`}>
-          <div className="player-dock-thumb-wrap">
-            {playable.thumbnail ? (
-              <img className="player-dock-thumb" src={playable.thumbnail} alt="" />
-            ) : (
-              <div className="player-dock-thumb player-dock-thumb-fallback" aria-hidden>
-                {playable.format.toUpperCase()}
-              </div>
-            )}
-          </div>
-          <div className="player-dock-center">
-            <p className="player-dock-title">{playable.title}</p>
-            <div className="player-dock-scrub">
-              <div
-                className={`player-dock-track${dockProgress.waiting && dur <= 0 ? " player-dock-track--busy" : ""}`}
-                aria-hidden
-              >
-                <div className="player-dock-fill" style={{ width: `${pct}%` }} />
-              </div>
-              <input
-                type="range"
-                className="player-dock-range"
-                min={0}
-                max={scrubMax}
-                step="any"
-                value={Math.min(cur, scrubMax)}
-                aria-label="Seek"
-                onChange={(event) => {
-                  const el = mediaRef.current;
-                  const next = Number(event.target.value);
-                  if (el && Number.isFinite(next)) {
-                    el.currentTime = next;
-                  }
-                }}
-              />
-            </div>
-          </div>
-          <div className="player-dock-actions">
-            <button
-              type="button"
-              className="player-dock-icon-btn player-dock-playpause"
-              aria-label={dockProgress.paused ? "Play" : "Pause"}
-              onClick={() => {
-                const el = mediaRef.current;
-                if (!el) {
-                  return;
-                }
-                if (el.paused) {
-                  void el.play();
-                } else {
-                  el.pause();
-                }
-              }}
-            >
-              {dockProgress.paused ? (
-                <span className="player-dock-play-glyph" aria-hidden />
-              ) : (
-                <span className="player-dock-pause-glyph" aria-hidden />
-              )}
-            </button>
-            <button
-              type="button"
-              className="player-dock-icon-btn"
-              aria-label="Expand player"
-              title="Full player"
-              onClick={onExpand}
-            >
-              ⛶
-            </button>
-            <button
-              type="button"
-              className="player-dock-icon-btn player-dock-stop"
-              aria-label="Stop playback"
-              onClick={onClose}
-            >
-              ×
-            </button>
-          </div>
-        </div>
+      {layout === "minimized" && objectUrl ? (
+        <MinimizedProgressDock
+          mediaRef={mediaRef}
+          objectUrl={objectUrl}
+          itemId={item?.id ?? ""}
+          streamUrl={stream?.url ?? ""}
+          useAudioElement={useAudioElement}
+          title={playable.title}
+          thumbnail={playable.thumbnail}
+          formatLabel={playable.format.toUpperCase()}
+          onExpand={onExpand}
+          onClose={onClose}
+        />
       ) : null}
     </>
   );
