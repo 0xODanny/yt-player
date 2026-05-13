@@ -490,8 +490,9 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
               }`}
               onClick={() => setFolderPlayMode("loop_folder")}
               title="When a track ends, play the next in this folder (wraps)"
+              aria-label="Loop folder: when a track ends, play the next in this folder"
             >
-              Loop folder
+              <span aria-hidden>🔁</span> Folder
             </button>
             <button
               type="button"
@@ -500,8 +501,9 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
               }`}
               onClick={() => setFolderPlayMode("repeat_one")}
               title="Repeat the current track"
+              aria-label="Repeat one: play the same track again when it ends"
             >
-              Repeat one
+              <span aria-hidden>🔂</span> One
             </button>
           </div>
         </div>

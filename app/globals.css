@@ -185,26 +185,36 @@ code {
 
 .folder-playback {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   margin: 10px 0 4px;
   padding: 8px 0;
   border-top: 1px solid rgba(36, 72, 0, 0.08);
   width: 100%;
   flex-basis: 100%;
+  min-width: 0;
 }
 
 .folder-playback-label {
-  font-size: 12px;
+  flex: 0 0 auto;
+  font-size: 11px;
   font-weight: 700;
   color: var(--muted);
-  margin-right: 4px;
+  margin-right: 2px;
+  letter-spacing: 0.02em;
 }
 
 .folder-playback-chip {
-  font-size: 12px;
-  padding: 6px 10px;
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topbar-meta {
@@ -972,6 +982,10 @@ button.footer-share {
   transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 
+.folder-playback .folder-chip {
+  gap: 3px;
+}
+
 .folder-chip:hover {
   color: var(--text);
 }
@@ -1440,8 +1454,8 @@ button.footer-share {
   width: 100%;
   padding: 12px 14px;
   border-radius: 12px;
-  border: 1px solid rgba(36, 72, 0, 0.12);
-  background: rgba(247, 244, 224, 0.6);
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-strong) 70%, var(--bg) 30%);
   color: var(--text);
   cursor: pointer;
   font-size: 0.95rem;
@@ -1507,8 +1521,9 @@ button.footer-share {
   align-items: flex-start;
   gap: 12px;
   padding: 12px 14px;
-  background: rgba(247, 244, 224, 0.6);
-  border: 1px solid rgba(36, 72, 0, 0.12);
+  /* Theme-aware: hardcoded cream broke Smoke/Paper (light text on light rows). */
+  background: color-mix(in srgb, var(--panel-strong) 70%, var(--bg) 30%);
+  border: 1px solid var(--panel-border);
   border-radius: 12px;
 }
 
@@ -1527,7 +1542,7 @@ button.footer-share {
 
 .settings-description {
   font-size: 0.8rem;
-  color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 82%, var(--accent) 18%);
   line-height: 1.45;
 }
 
@@ -1582,9 +1597,9 @@ button.footer-share {
   max-height: min(240px, 32vh);
   overflow-y: auto;
   padding: 4px 8px 8px 0;
-  border: 1px solid rgba(36, 72, 0, 0.1);
+  border: 1px solid var(--panel-border);
   border-radius: 12px;
-  background: rgba(247, 244, 224, 0.35);
+  background: color-mix(in srgb, var(--panel-strong) 55%, var(--bg) 45%);
 }
 
 .about-notes-list {
@@ -1608,7 +1623,7 @@ button.footer-share {
   margin: 0;
   padding-left: 1.1rem;
   font-size: 0.82rem;
-  color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 78%, var(--accent) 22%);
   line-height: 1.45;
 }
 
@@ -2357,6 +2372,14 @@ html[data-theme="smoke"] .search-in-library {
   color: var(--accent-strong);
   background: rgba(94, 179, 224, 0.12);
   border-color: rgba(94, 179, 224, 0.35);
+}
+
+html[data-theme="smoke"] .settings-description {
+  color: color-mix(in srgb, var(--accent) 36%, #e7f5fc 64%);
+}
+
+html[data-theme="smoke"] .folder-playback {
+  border-top-color: rgba(148, 163, 184, 0.22);
 }
 
 html[data-theme="paper"] {

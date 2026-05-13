@@ -47,6 +47,7 @@ export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
     title: "May 2026",
     items: [
       "Themes (OG Pepinho, Smoke, Paper) in Settings, smaller Search preset labels, clearer update and share text, and a friendlier “check for updates” when your version matches the public release.",
+      "Smoke theme: settings descriptions match the readable blue-gray tone of What’s new; Library playback stays on one row with compact 🔁 Folder and 🔂 One controls.",
     ],
   },
   {
