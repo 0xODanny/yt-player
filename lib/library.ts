@@ -106,17 +106,26 @@ export async function loadManifest(): Promise<Manifest> {
     const file = await handle.getFile();
     const text = await file.text();
     const parsed = JSON.parse(text) as Manifest;
-    return normalizeManifest(parsed);
+    const manifest = normalizeManifest(parsed);
+    if (manifestMetadataRepairDirty(parsed, manifest)) {
+      await saveManifest(manifest);
+    }
+    return manifest;
   } catch {
     // Manifest doesn't exist yet OR is unreadable. Fall back to localStorage
     // backup if we have one (covers the case where OPFS was just evicted
     // but localStorage survived).
     const backup = readManifestBackup();
     if (backup) {
-      return normalizeManifest({
+      const merged: Manifest = {
         ...backup,
         items: backup.items.map((item) => ({ ...item, missing: true })),
-      });
+      };
+      const manifest = normalizeManifest(merged);
+      if (manifestMetadataRepairDirty(merged, manifest)) {
+        await saveManifest(manifest);
+      }
+      return manifest;
     }
     return emptyManifest();
   }
@@ -250,6 +259,41 @@ function sanitizeManifestItem(
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
     missing: raw.missing === true ? true : undefined,
   };
+}
+
+/**
+ * True when normalized items differ from what's on disk in ways we repair
+ * (e.g. legacy type/format). Then we persist so the next app update and
+ * export/import see the fixed metadata — in-memory-only repair wasn't
+ * enough if the user never triggered another save.
+ */
+function manifestMetadataRepairDirty(
+  parsed: Partial<Manifest>,
+  normalized: Manifest,
+): boolean {
+  const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
+  const norm = normalized.items;
+  if (rawItems.length !== norm.length) {
+    return true;
+  }
+  const rawById = new Map(
+    rawItems.map((entry) => {
+      const r = entry as Partial<ManifestItem>;
+      return [typeof r.id === "string" ? r.id : "", r] as const;
+    }),
+  );
+  for (const n of norm) {
+    const r = rawById.get(n.id);
+    if (!r || typeof r.id !== "string") {
+      return true;
+    }
+    const rFormat = r.format === "mp3" || r.format === "mp4" ? r.format : "";
+    const rType = r.type === "audio" || r.type === "video" ? r.type : "";
+    if (rFormat !== n.format || rType !== n.type) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function fileExtForFormat(format: "mp3" | "mp4"): string {

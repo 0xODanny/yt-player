@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.6";
+export const APP_RELEASE_VERSION = "1.1.7";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,13 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.7",
+    title: "May 2026",
+    items: [
+      "Library manifest repairs (e.g. type/format for older saves) are now written back to storage when you open the app, not only kept in memory — exports and future updates see the fixed metadata.",
+    ],
+  },
   {
     version: "1.1.6",
     title: "May 2026",
