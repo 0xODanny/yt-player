@@ -1,6 +1,6 @@
 /* eslint-disable no-restricted-globals */
 
-const CACHE_VERSION = "yt-local-tool-v1-1-11";
+const CACHE_VERSION = "yt-local-tool-v1-1-12";
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -63,6 +63,12 @@ self.addEventListener("fetch", (event) => {
 
   // Never cache cross-origin requests (worker API, YouTube thumbnails, etc.)
   if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  // Let the browser handle media fetches directly (never cache through SW).
+  if (request.destination === "audio" || request.destination === "video") {
+    event.respondWith(fetch(request));
     return;
   }
 

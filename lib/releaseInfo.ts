@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.11";
+export const APP_RELEASE_VERSION = "1.1.12";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,15 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.12",
+    title: "May 2026",
+    items: [
+      "Playback: moved progress listeners off useLayoutEffect (sync React work was blocking the main thread and glitching audio — streams and saved MP3s). Clock UI updates use startTransition; removed the extra interval tick.",
+      "Media Session: avoid spamming play/pause state when the OS re-fires events.",
+      "Service worker: never route audio/video subresource fetches through stale-while-revalidate (pass-through fetch only).",
+    ],
+  },
   {
     version: "1.1.11",
     title: "May 2026",

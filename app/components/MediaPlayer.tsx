@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 
 import { getItemObjectUrl, type ManifestItem } from "@/lib/library";
 import { isAndroidNative } from "@/lib/platform";
@@ -209,8 +209,11 @@ export function MediaPlayer({
   // audio track of an mp4 via the <audio> tag.
   const useAudioElement = !!playable && (playable.type === "audio" || audioOnly);
 
-  /** Best-effort duration for progress UI when metadata reports Infinity/NaN. */
-  useLayoutEffect(() => {
+  /** Progress UI: must not run in useLayoutEffect — sync React updates there
+   *  can block painting and the main thread badly enough to glitch audio,
+   *  including blob: library files. Clock-driven updates use startTransition
+   *  so the decoder keeps priority. */
+  useEffect(() => {
     const has = item || stream;
     if (!has || !objectUrl) {
       return;
@@ -249,72 +252,87 @@ export function MediaPlayer({
     };
 
     let lastTimeThrottle = 0;
-    const publish = () => {
-      setDockProgress((prev) => {
-        const next = {
+    const merge = (prev: typeof dockProgress, next: typeof dockProgress) => {
+      if (
+        Math.abs(prev.current - next.current) < 0.1 &&
+        prev.duration === next.duration &&
+        Math.abs(prev.bufferedEnd - next.bufferedEnd) < 0.25 &&
+        prev.paused === next.paused &&
+        prev.waiting === next.waiting
+      ) {
+        return prev;
+      }
+      return next;
+    };
+
+    const publishImmediate = () => {
+      setDockProgress((prev) =>
+        merge(prev, {
           current: el.currentTime,
           duration: readMediaDuration(el),
           bufferedEnd: readBufferedEnd(el),
           paused: el.paused,
           waiting: streamWaitingRef.current,
-        };
-        if (
-          Math.abs(prev.current - next.current) < 0.1 &&
-          prev.duration === next.duration &&
-          Math.abs(prev.bufferedEnd - next.bufferedEnd) < 0.25 &&
-          prev.paused === next.paused &&
-          prev.waiting === next.waiting
-        ) {
-          return prev;
-        }
-        return next;
+        }),
+      );
+    };
+
+    const publishFromClock = () => {
+      startTransition(() => {
+        setDockProgress((prev) =>
+          merge(prev, {
+            current: el.currentTime,
+            duration: readMediaDuration(el),
+            bufferedEnd: readBufferedEnd(el),
+            paused: el.paused,
+            waiting: streamWaitingRef.current,
+          }),
+        );
       });
     };
 
     const publishThrottledFromClock = () => {
       const now = performance.now();
-      if (now - lastTimeThrottle < 240) {
+      if (now - lastTimeThrottle < 400) {
         return;
       }
       lastTimeThrottle = now;
-      publish();
+      publishFromClock();
     };
 
     const onWaiting = () => {
       streamWaitingRef.current = true;
-      publish();
+      publishImmediate();
     };
     const onPlaying = () => {
       streamWaitingRef.current = false;
-      publish();
+      publishImmediate();
     };
 
-    publish();
+    publishImmediate();
     el.addEventListener("timeupdate", publishThrottledFromClock);
     el.addEventListener("progress", publishThrottledFromClock);
-    el.addEventListener("loadedmetadata", publish);
-    el.addEventListener("loadeddata", publish);
-    el.addEventListener("canplay", publish);
-    el.addEventListener("canplaythrough", publish);
-    el.addEventListener("play", publish);
-    el.addEventListener("pause", publish);
-    el.addEventListener("seeking", publish);
-    el.addEventListener("seeked", publish);
+    el.addEventListener("loadedmetadata", publishImmediate);
+    el.addEventListener("loadeddata", publishImmediate);
+    el.addEventListener("canplay", publishImmediate);
+    el.addEventListener("canplaythrough", publishImmediate);
+    el.addEventListener("play", publishImmediate);
+    el.addEventListener("pause", publishImmediate);
+    el.addEventListener("seeking", publishImmediate);
+    el.addEventListener("seeked", publishImmediate);
     el.addEventListener("waiting", onWaiting);
     el.addEventListener("playing", onPlaying);
-    const tick = window.setInterval(publish, 900);
     return () => {
-      window.clearInterval(tick);
       el.removeEventListener("timeupdate", publishThrottledFromClock);
       el.removeEventListener("progress", publishThrottledFromClock);
-      el.removeEventListener("loadedmetadata", publish);
-      el.removeEventListener("loadeddata", publish);
-      el.removeEventListener("canplay", publish);
-      el.removeEventListener("canplaythrough", publish);
-      el.removeEventListener("play", publish);
-      el.removeEventListener("pause", publish);
-      el.removeEventListener("seeking", publish);
-      el.removeEventListener("seeked", publish);
+      el.removeEventListener("loadedmetadata", publishImmediate);
+      el.removeEventListener("loadeddata", publishImmediate);
+      el.removeEventListener("canplay", publishImmediate);
+      el.removeEventListener("canplaythrough", publishImmediate);
+      el.removeEventListener("play", publishImmediate);
+      el.removeEventListener("pause", publishImmediate);
+      el.removeEventListener("seeking", publishImmediate);
+      el.removeEventListener("seeked", publishImmediate);
       el.removeEventListener("waiting", onWaiting);
       el.removeEventListener("playing", onPlaying);
     };
@@ -549,15 +567,21 @@ export function MediaPlayer({
     if (!el) {
       return;
     }
-    const onPlay = () => {
-      void MediaSession.setPlaybackState({ playbackState: "playing" }).catch(() => {
+    let lastSessionState: "playing" | "paused" | "" = "";
+    const pushSessionState = (state: "playing" | "paused") => {
+      if (lastSessionState === state) {
+        return;
+      }
+      lastSessionState = state;
+      void MediaSession.setPlaybackState({ playbackState: state }).catch(() => {
         // ignore
       });
     };
+    const onPlay = () => {
+      pushSessionState("playing");
+    };
     const onPause = () => {
-      void MediaSession.setPlaybackState({ playbackState: "paused" }).catch(() => {
-        // ignore
-      });
+      pushSessionState("paused");
     };
     el.addEventListener("play", onPlay);
     el.addEventListener("pause", onPause);
