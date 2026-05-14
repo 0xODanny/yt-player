@@ -53,7 +53,7 @@ npm run start:prod
 - `WORKER_API_SECRET`
   Shared bearer token required by `POST /jobs` and `GET /jobs/:id`.
 - `ALLOWED_ORIGIN`
-  Exact allowed browser origin for CORS.
+  Comma-separated allowed browser `Origin` headers for CORS. The server merges in `https://pepinho.lol` and `https://www.pepinho.lol` automatically (two different origins; iOS PWAs keep the install host).
 - `WORKER_PUBLIC_URL`
   Optional. Public base URL (e.g. `https://worker.pepinho.lol`) used to build absolute `downloadUrl` values returned to the frontend. Set this in production so the frontend always gets correct `https://` links even if your reverse proxy doesn't forward `X-Forwarded-Proto`.
 - `YT_DLP_BINARY`

@@ -10,6 +10,7 @@ import "dotenv/config";
 import cors from "cors";
 import express from "express";
 
+import { buildAllowedOrigins } from "./lib/corsOrigins";
 import { startDownloadCleanupLoop } from "./lib/storage";
 import { diagRouter } from "./routes/diag";
 import { filesRouter } from "./routes/files";
@@ -28,10 +29,11 @@ const port = Number(process.env.PORT || 3001);
 // reports its origin as exactly `https://localhost` for every API
 // request — that origin needs to be in the allow-list or the
 // preflight OPTIONS fails and the actual call never runs.
-const allowedOrigins = (process.env.ALLOWED_ORIGIN?.trim() || "http://localhost:3002")
-  .split(",")
-  .map((entry) => entry.trim())
-  .filter(Boolean);
+//
+// buildAllowedOrigins() also appends https://pepinho.lol and
+// https://www.pepinho.lol so www vs apex installs both work even if
+// env only listed one (see worker/src/lib/corsOrigins.ts).
+const allowedOrigins = buildAllowedOrigins();
 
 const corsOptions: cors.CorsOptions = {
   origin(origin, callback) {

@@ -52,7 +52,7 @@ See `worker/README.md` for details. Worker env (`worker/.env`, gitignored):
 
 - `PORT` (default `3001`)
 - `WORKER_API_SECRET` — required, shared with the frontend
-- `ALLOWED_ORIGIN` — exact browser origin allowed by CORS (e.g. `https://pepinho.lol`)
+- `ALLOWED_ORIGIN` — comma-separated browser `Origin` values allowed by CORS (e.g. `https://pepinho.lol,https://yt-player-ruby.vercel.app`). The worker also always allows both `https://pepinho.lol` and `https://www.pepinho.lol` because they are different origins and iOS PWAs keep the install URL’s host.
 - `YT_DLP_BINARY`, `FFMPEG_BINARY` — optional binary overrides
 
 ## PWA

@@ -9,6 +9,7 @@ import {
   recentJobSamples,
   recentStreamSamples,
 } from "../lib/metrics";
+import { buildAllowedOrigins } from "../lib/corsOrigins";
 import { streamCacheStats } from "../lib/streamCache";
 
 const execFileAsync = promisify(execFile);
@@ -159,10 +160,7 @@ diagRouter.get("/", async (_req, res) => {
       hasFfmpeg: Boolean(process.env.FFMPEG_BINARY?.trim()),
       ytDlpPlayerClients:
         process.env.YT_DLP_PLAYER_CLIENTS?.trim() || "(default)",
-      allowedOrigins: (process.env.ALLOWED_ORIGIN?.trim() || "")
-        .split(",")
-        .map((entry) => entry.trim())
-        .filter(Boolean),
+      allowedOrigins: buildAllowedOrigins(),
       workerPublicUrl: process.env.WORKER_PUBLIC_URL?.trim() || "(derived)",
     },
     cookies,
