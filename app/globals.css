@@ -2150,8 +2150,14 @@ body.player-dock-visible .shell {
   background: rgba(247, 244, 224, 0.6);
   border: 1px solid rgba(36, 72, 0, 0.16);
   border-radius: 14px;
-  overflow: hidden;
+  /* Must not clip the ⋯ menu panel (absolute, below the trigger). */
+  overflow: visible;
   transition: border-color 140ms ease, transform 140ms ease;
+}
+
+/* Lift the open row above neighbours so the menu isn’t covered. */
+.search-item:has(.search-result-menu[open]) {
+  z-index: 8;
 }
 
 .search-item:hover {
@@ -2337,7 +2343,7 @@ body.player-dock-visible .shell {
   border: 1px solid var(--panel-border);
   border-radius: 12px;
   box-shadow: var(--shadow);
-  z-index: 6;
+  z-index: 50;
 }
 
 .search-result-menu-heading {
