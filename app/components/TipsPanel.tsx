@@ -149,6 +149,27 @@ export function TipsPanel({ open, onClose }: TipsPanelProps) {
             </ul>
           </section>
 
+          <section className="tips-section">
+            <h3 className="tips-section-title">Mobile data &amp; streaming</h3>
+            <p className="tips-lead">
+              <strong>Play audio / Play video</strong> asks our servers for a signed link, then your
+              phone pulls the media straight from YouTube&apos;s CDN. On a weak cell signal that first
+              step can take <strong>1–2 minutes</strong> — wait it out or try Wi‑Fi. Very long mixes may
+              buffer longer before they start; downloading an MP3 is the most reliable option offline.
+            </p>
+            <ul className="tips-bullets">
+              <li>
+                On <strong>iPhone</strong>, Safari often blocks autoplay until you tap the player&apos;s
+                play button — that&apos;s normal.
+              </li>
+              <li>
+                If a <strong>download</strong> fails with a sign-in / age message, YouTube is blocking
+                that title for our worker — try another upload or quality; streams can behave the same
+                way for those videos.
+              </li>
+            </ul>
+          </section>
+
           {!androidApp && !standalone ? (
             <section className="tips-section">
               <h3 className="tips-section-title">Browser &amp; library</h3>

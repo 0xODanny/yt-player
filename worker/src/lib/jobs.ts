@@ -674,12 +674,12 @@ async function doResolveStreamUrl(
   // they're the most reliable single-file progressive streams
   // (predate the PO Token era). HLS / muxed-mp4 branches are kept
   // as preferred picks for the small minority of videos that still
-  // expose them. Audio-only `bestaudio*` is the last-resort branch
-  // for the rare video that has audio HLS but no usable video
-  // stream — <audio> picks up the audio track of any of these.
+  // expose them. Audio-only: prefer **140** (AAC m4a) first — it is
+  // the most compatible pick for iOS Safari and cellular playback;
+  // some `bestaudio` variants are awkward on long mixes or weak links.
   const formatSelector =
     type === "audio"
-      ? "ba[acodec^=mp4a]/ba[ext=m4a]/140/18/ba*/b"
+      ? "140/ba[ext=m4a][acodec^=mp4a]/ba[acodec^=mp4a]/18/ba*/b"
       : "best[protocol*=m3u8]/b[ext=mp4][acodec!=none][vcodec!=none]/18/22/ba*+bv*/b";
 
   const args = [

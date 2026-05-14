@@ -881,7 +881,8 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
             videoId: result.videoId,
             status: "streaming",
             progress: 0,
-            message: "Quick save is only in the Android app. Playing instead.",
+            message:
+              "Quick save is only in the Android app — playing instead. Resolving stream… (can take 1–2 minutes on slow mobile data)",
           });
           try {
             const source = await fetchStreamSource(url, streamType);
@@ -932,6 +933,7 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
           videoId: result.videoId,
           status: "streaming",
           progress: 0,
+          message: "Resolving stream… (can take 1–2 minutes on slow mobile data)",
         });
         try {
           const streamType = preset === "stream-audio" ? "audio" : "video";

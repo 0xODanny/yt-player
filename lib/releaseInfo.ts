@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.15";
+export const APP_RELEASE_VERSION = "1.1.16";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,15 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.16",
+    title: "May 2026",
+    items: [
+      "Streaming on slow / mobile data: longer timeout (3 min) for the stream lookup, one automatic retry on timeouts and common server errors, clearer error text. Status line while resolving explains 1–2 min on weak cell.",
+      "Worker: audio stream format prefers YouTube itag 140 (AAC m4a) first for better iOS / cellular compatibility before falling back.",
+      "Tips: new section on mobile data, iPhone tap-to-play, and age-blocked downloads.",
+    ],
+  },
   {
     version: "1.1.15",
     title: "May 2026",
