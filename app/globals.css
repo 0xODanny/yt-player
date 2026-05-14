@@ -1184,7 +1184,8 @@ button.footer-share {
 .player-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(36, 72, 0, 0.78);
+  /* Theme-tinted scrim (Settings + player modals). Pepinho was hardcoded sage here. */
+  background: color-mix(in srgb, var(--bg-deep) 42%, rgb(0 0 0 / 0.72));
   backdrop-filter: blur(8px);
   display: grid;
   place-items: center;
@@ -1766,7 +1767,9 @@ body.player-dock-visible .shell {
 
 /* ── Settings dialog ────────────────────────────────── */
 .settings-dialog {
-  width: min(520px, 100%);
+  width: min(720px, calc(100vw - 32px));
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .settings-body {
@@ -1800,9 +1803,10 @@ body.player-dock-visible .shell {
 }
 
 .settings-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 34%);
+  align-items: start;
+  gap: 12px 16px;
   padding: 12px 14px;
   /* Theme-aware: hardcoded cream broke Smoke/Paper (light text on light rows). */
   background: color-mix(in srgb, var(--panel-strong) 70%, var(--bg) 30%);
@@ -1814,7 +1818,6 @@ body.player-dock-visible .shell {
   display: grid;
   gap: 4px;
   min-width: 0;
-  flex: 1 1 auto;
 }
 
 .settings-label {
@@ -1827,6 +1830,8 @@ body.player-dock-visible .shell {
   font-size: 0.8rem;
   color: color-mix(in srgb, var(--muted) 82%, var(--accent) 18%);
   line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .settings-footer {
@@ -2049,9 +2054,10 @@ body.player-dock-visible .shell {
 }
 
 .settings-select {
-  flex: 0 0 auto;
+  justify-self: stretch;
+  width: 100%;
   min-width: 0;
-  max-width: 60%;
+  max-width: 100%;
   padding: 8px 10px;
   border-radius: 12px;
   border: 1px solid rgba(36, 72, 0, 0.28);
@@ -2061,6 +2067,10 @@ body.player-dock-visible .shell {
   cursor: pointer;
   font-size: 0.78rem;
   line-height: 1.25;
+}
+
+.settings-row .toggle {
+  justify-self: end;
 }
 
 .settings-select:focus {
@@ -2624,11 +2634,13 @@ body.player-dock-visible .shell {
     width: 100%;
   }
 
-  /* On phones, a 180px-wide select next to label + description squeezes
-     the text into a tiny column. Stack the select underneath instead. */
-  .settings-row:has(.settings-select) {
-    flex-direction: column;
-    align-items: stretch;
+  /* Stack label + control on narrow viewports (grid, not flex). */
+  .settings-row {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-row .toggle {
+    justify-self: start;
   }
 }
 
