@@ -86,10 +86,12 @@ jobs:
             echo "::error::Missing repository secret NEXT_PUBLIC_WORKER_API_URL. Set it under Settings > Secrets and variables > Actions before this workflow can build a usable APK."
             exit 1
           fi
-          cat > .env.production.local <<EOF
-          NEXT_PUBLIC_WORKER_API_URL=$NEXT_PUBLIC_WORKER_API_URL
-          NEXT_PUBLIC_WORKER_API_KEY=$NEXT_PUBLIC_WORKER_API_KEY
-          EOF
+          # Avoid YAML-indented heredocs: they inject leading spaces into keys
+          # and the closing delimiter is easy to get wrong on Linux bash.
+          {
+            echo "NEXT_PUBLIC_WORKER_API_URL=$NEXT_PUBLIC_WORKER_API_URL"
+            echo "NEXT_PUBLIC_WORKER_API_KEY=$NEXT_PUBLIC_WORKER_API_KEY"
+          } > .env.production.local
 
       # Reconstruct the release keystore from a base64-encoded secret.
       # The local workflow:
@@ -101,16 +103,19 @@ jobs:
         id: keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > android/yt-player-release.keystore
             echo "signed=true" >> "$GITHUB_OUTPUT"
-            cat > android/signing.properties <<EOF
-          storeFile=yt-player-release.keystore
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          EOF
+            {
+              echo "storeFile=yt-player-release.keystore"
+              echo "storePassword=$KEYSTORE_PASSWORD"
+              echo "keyAlias=$KEY_ALIAS"
+              echo "keyPassword=$KEY_PASSWORD"
+            } > android/signing.properties
             echo "::notice::Release keystore configured — APK will be signed."
           else
             echo "signed=false" >> "$GITHUB_OUTPUT"
@@ -118,6 +123,9 @@ jobs:
           fi
 
       - name: Build Android APK
+        env:
+          # Static export + typecheck can spike RAM on ubuntu-latest.
+          NODE_OPTIONS: "--max-old-space-size=6144"
         run: npm run build:android:release
 
       # The signed APK lands at app-release.apk; an unsigned build
