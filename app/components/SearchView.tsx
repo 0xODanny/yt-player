@@ -31,11 +31,19 @@ import {
   type SearchResult,
 } from "@/lib/search";
 import {
-  isAndroidNativeOnlyPreset,
   type SearchPreset,
   useSettings,
 } from "@/lib/settings";
-import { fetchStreamSource, type StreamSource } from "@/lib/stream";
+import { fetchStreamSource } from "@/lib/stream";
+import {
+  REACTIVATE_IPROYAL_HEAVY_WORKER_DOWNLOADS,
+  isIpRoyalHeavyDownloadDisabledInUi,
+} from "@/lib/ipRoyalUsage";
+import {
+  getStreamTapKind,
+  setStreamTapKind,
+  type StreamTapKind,
+} from "@/lib/streamTapPreference";
 
 /**
  * iOS PWAs get suspended (and frequently restarted from scratch) when the
@@ -122,6 +130,8 @@ type SearchViewProps = {
 type DownloadState = {
   videoId: string;
   jobId?: string;
+  /** Preset used for worker `addItem` metadata when the job completes (search row preset is always stream-*). */
+  workerSavePreset?: SearchPreset;
   status:
     | "queued"
     | "processing"
@@ -140,10 +150,6 @@ type DownloadState = {
   savedItem?: ManifestItem;
   message?: string;
 };
-
-function isStreamPreset(preset: SearchPreset): boolean {
-  return preset === "stream-audio" || preset === "stream-video";
-}
 
 /**
  * Friendly file-extension hint for a direct-download preset. The bytes
@@ -230,7 +236,26 @@ type PresetOption = {
   androidNativeOnly?: boolean;
 };
 
-const PRESET_OPTIONS: PresetOption[] = [
+/**
+ * Worker “save to library” choices for the ⋯ menu (MP3 + fixed video).
+ * IPRoyal-heavy: full file is pulled on the worker while `YT_DLP_PROXY`
+ * is set. Hidden/disabled in UI when `REACTIVATE_IPROYAL_HEAVY_WORKER_DOWNLOADS`
+ * is false — see lib/ipRoyalUsage.ts to turn them back on.
+ */
+const WORKER_SAVE_MENU: Array<{ preset: SearchPreset; label: string }> = [
+  { preset: "mp3", label: "Save as MP3" },
+  { preset: "video-144p", label: "Save as 144p video" },
+  { preset: "video-240p", label: "Save as 240p video" },
+  { preset: "video-360p", label: "Save as 360p video" },
+  { preset: "video-720p", label: "Save as 720p video" },
+  { preset: "video-1080p", label: "Save as 1080p video" },
+];
+
+/**
+ * @deprecated Preset chip strip — kept for REACTIVATE_IPROYAL_HEAVY_WORKER_DOWNLOADS.
+ * When true, we could render these again next to Audio/Video. See lib/ipRoyalUsage.ts.
+ */
+const LEGACY_PRESET_CHIP_OPTIONS: PresetOption[] = [
   { value: "stream-audio", label: "Play audio" },
   { value: "stream-video", label: "Play video" },
   { value: "mp3", label: "Save MP3" },
@@ -304,18 +329,33 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
     }
   }, []);
 
-  // Filter the chip strip down to what the current platform can
-  // actually do. Memoised on androidNative so the array reference is
-  // stable across re-renders (cheap, but keeps React happy).
-  const visiblePresets = useMemo(
-    () =>
-      PRESET_OPTIONS.filter(
-        (option) => !option.androidNativeOnly || androidNative,
-      ),
-    [androidNative],
+  const preset = settings.searchPreset;
+
+  const [streamTapKind, setStreamTapKindState] = useState<StreamTapKind>("audio");
+
+  useEffect(() => {
+    setStreamTapKindState(getStreamTapKind());
+  }, []);
+
+  useEffect(() => {
+    if (preset === "stream-video") {
+      setStreamTapKindState("video");
+      setStreamTapKind("video");
+    } else if (preset === "stream-audio") {
+      setStreamTapKindState("audio");
+      setStreamTapKind("audio");
+    }
+  }, [preset]);
+
+  const setStreamTapKindUi = useCallback(
+    (kind: StreamTapKind) => {
+      setStreamTapKindState(kind);
+      setStreamTapKind(kind);
+      update("searchPreset", kind === "video" ? "stream-video" : "stream-audio");
+    },
+    [update],
   );
 
-  const preset = settings.searchPreset;
   const presetRef = useRef(preset);
   presetRef.current = preset;
 
@@ -476,6 +516,7 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
 
     const jobId = download.jobId;
     const videoId = download.videoId;
+    const workerSavePreset = download.workerSavePreset;
     let intervalId: number | null = null;
     let fastPollTimer: number | null = null;
     let persistInFlight = false;
@@ -541,13 +582,14 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
             }
             const blob = await fileResponse.blob();
             const result = resultsRef.current.find((r) => r.videoId === videoId);
-            const { format } = presetToJobPayload(presetRef.current);
+            const persistPreset = workerSavePreset ?? presetRef.current;
+            const { format } = presetToJobPayload(persistPreset);
             const item = await addItem({
               blob,
               title: next.metadata?.title || result?.title || "Untitled",
               sourceUrl: youtubeWatchUrl(videoId),
               format,
-              quality: presetLabel(presetRef.current),
+              quality: presetLabel(persistPreset),
               duration: next.metadata?.duration ?? result?.lengthSeconds ?? null,
               thumbnail:
                 next.metadata?.thumbnail ||
@@ -849,132 +891,83 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
     setOrphanedDownloads([]);
   }, []);
 
-  const handleResultTap = useCallback(
-    async (result: SearchResult) => {
+  const runStreamForResult = useCallback(
+    async (result: SearchResult, kind: StreamTapKind) => {
       if (
         download &&
         download.status !== "complete" &&
         download.status !== "failed" &&
         download.status !== "cancelled"
       ) {
-        return; // single active job at a time
+        return;
+      }
+
+      setStreamTapKind(kind);
+
+      const url = youtubeWatchUrl(result.videoId);
+      const streamType = kind === "audio" ? "audio" : "video";
+
+      setDownload({
+        videoId: result.videoId,
+        status: "streaming",
+        progress: 0,
+        message: "Resolving stream… (can take 1–2 minutes on slow mobile data)",
+      });
+      try {
+        const source = await fetchStreamSource(url, streamType);
+        playStream({
+          stream: {
+            ...source,
+            title: source.title || result.title,
+            author: source.author || result.author,
+            thumbnail:
+              source.thumbnail ||
+              pickThumbnail(result.thumbnails, 480)?.url,
+          },
+        });
+        setDownload({
+          videoId: result.videoId,
+          status: "complete",
+          progress: 100,
+        });
+      } catch (error) {
+        setDownload({
+          videoId: result.videoId,
+          status: "failed",
+          progress: 0,
+          message:
+            error instanceof Error ? error.message : "Couldn't load this video.",
+        });
+      }
+    },
+    [download, playStream],
+  );
+
+  const startWorkerSaveForResult = useCallback(
+    async (result: SearchResult, savePreset: SearchPreset) => {
+      if (isIpRoyalHeavyDownloadDisabledInUi(savePreset)) {
+        return;
+      }
+      if (
+        download &&
+        download.status !== "complete" &&
+        download.status !== "failed" &&
+        download.status !== "cancelled"
+      ) {
+        return;
       }
 
       const url = youtubeWatchUrl(result.videoId);
 
-      // Direct-download path (Android Capacitor app only). Same
-      // metadata round-trip as streaming (worker → IPRoyal → yt-dlp
-      // returns a googlevideo.com URL), but instead of opening
-      // MediaPlayer we hand the URL to native HTTP code which fetches
-      // the file from the device's residential IP and stages it for
-      // OPFS save. Bandwidth flow: ~50 KB through IPRoyal for
-      // metadata, then ~50 MB phone↔googlevideo direct, free.
-      //
-      // Fallback: if we're somehow on a non-Android platform with a
-      // direct-* preset selected (e.g. user manually edited
-      // localStorage), degrade gracefully to a stream of the same
-      // type so the tap isn't a no-op.
-      if (isAndroidNativeOnlyPreset(preset)) {
-        if (!androidNative) {
-          const streamType = preset === "direct-audio" ? "audio" : "video";
-          setDownload({
-            videoId: result.videoId,
-            status: "streaming",
-            progress: 0,
-            message:
-              "Quick save is only in the Android app — playing instead. Resolving stream… (can take 1–2 minutes on slow mobile data)",
-          });
-          try {
-            const source = await fetchStreamSource(url, streamType);
-            playStream({
-              stream: {
-                ...source,
-                title: source.title || result.title,
-                author: source.author || result.author,
-                thumbnail:
-                  source.thumbnail ||
-                  pickThumbnail(result.thumbnails, 480)?.url,
-              },
-            });
-            setDownload({
-              videoId: result.videoId,
-              status: "complete",
-              progress: 100,
-            });
-          } catch (error) {
-            setDownload({
-              videoId: result.videoId,
-              status: "failed",
-              progress: 0,
-              message:
-                error instanceof Error ? error.message : "Couldn't load this video.",
-            });
-          }
-          return;
-        }
-
-        await executeDirectDownload({
-          videoId: result.videoId,
-          title: result.title,
-          author: result.author,
-          thumbnail: pickThumbnail(result.thumbnails, 480)?.url ?? null,
-          durationSeconds: result.lengthSeconds ?? null,
-          preset: preset as "direct-audio" | "direct-video",
-        });
-        return;
-      }
-
-      // Stream path: ask the worker to resolve a googlevideo.com URL we can
-      // play directly, then open MediaPlayer with that URL. No download,
-      // no library save, no IPRoyal bandwidth (just the tiny metadata
-      // call). Ad-free because we bypass YouTube's player.
-      if (isStreamPreset(preset)) {
-        setDownload({
-          videoId: result.videoId,
-          status: "streaming",
-          progress: 0,
-          message: "Resolving stream… (can take 1–2 minutes on slow mobile data)",
-        });
-        try {
-          const streamType = preset === "stream-audio" ? "audio" : "video";
-          const source = await fetchStreamSource(url, streamType);
-          // Augment with the search result's metadata so the player has
-          // a thumbnail / author even if yt-dlp's --get-url skipped them.
-          playStream({
-            stream: {
-              ...source,
-              title: source.title || result.title,
-              author: source.author || result.author,
-              thumbnail:
-                source.thumbnail ||
-                pickThumbnail(result.thumbnails, 480)?.url,
-            },
-          });
-          setDownload({
-            videoId: result.videoId,
-            status: "complete",
-            progress: 100,
-          });
-        } catch (error) {
-          setDownload({
-            videoId: result.videoId,
-            status: "failed",
-            progress: 0,
-            message: error instanceof Error ? error.message : "Couldn't load this video.",
-          });
-        }
-        return;
-      }
-
-      // Download path (existing behaviour).
       setDownload({
         videoId: result.videoId,
         status: "queued",
         progress: 0,
         progressIndeterminate: true,
+        workerSavePreset: savePreset,
       });
 
-      const { format, quality } = presetToJobPayload(preset);
+      const { format, quality } = presetToJobPayload(savePreset);
 
       try {
         const { response, data } = await createJob({ url, format, quality });
@@ -994,6 +987,7 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
           status: "queued",
           progress: 0,
           progressIndeterminate: true,
+          workerSavePreset: savePreset,
         });
       } catch (error) {
         setDownload({
@@ -1004,7 +998,14 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
         });
       }
     },
-    [download, preset, androidNative, onLibraryChanged, executeDirectDownload, playStream],
+    [download],
+  );
+
+  const handleResultTap = useCallback(
+    async (result: SearchResult) => {
+      await runStreamForResult(result, streamTapKind);
+    },
+    [runStreamForResult, streamTapKind],
   );
 
   const friendlyMessage = useMemo(() => {
@@ -1146,19 +1147,41 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
             ) : null}
           </div>
 
-          <div className="search-presets" role="radiogroup" aria-label="Download quality">
-            {visiblePresets.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={preset === option.value}
-                className={`folder-chip${preset === option.value ? " active" : ""}`}
-                onClick={() => update("searchPreset", option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
+          <div className="search-presets" role="radiogroup" aria-label="Default row tap">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={streamTapKind === "audio"}
+              className={`folder-chip${streamTapKind === "audio" ? " active" : ""}`}
+              onClick={() => setStreamTapKindUi("audio")}
+            >
+              Audio
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={streamTapKind === "video"}
+              className={`folder-chip${streamTapKind === "video" ? " active" : ""}`}
+              onClick={() => setStreamTapKindUi("video")}
+            >
+              Video
+            </button>
+            {REACTIVATE_IPROYAL_HEAVY_WORKER_DOWNLOADS
+              ? LEGACY_PRESET_CHIP_OPTIONS.filter(
+                  (option) => !option.androidNativeOnly || androidNative,
+                ).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={preset === option.value}
+                    className={`folder-chip${preset === option.value ? " active" : ""}`}
+                    onClick={() => update("searchPreset", option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))
+              : null}
           </div>
 
           <div className="actions">
@@ -1166,11 +1189,8 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
               {searching ? "Searching…" : "Search"}
             </button>
             <p className="helper-text">
-              {isStreamPreset(preset)
-                ? `Tap a result to play it ad-free.`
-                : isAndroidNativeOnlyPreset(preset)
-                  ? `Tap a result to save it to your library (uses your phone's data). You can lock the screen while it saves. If you force-close the app before it finishes, you may see a banner here to try that download again.`
-                  : `Tap a result to save it to your library as ${presetLabel(preset)}.`}
+              Tap a result to stream ad-free ({streamTapKind === "video" ? "video" : "audio"}).
+              Use ⋯ on a row for play as…, quick save (Android), or other formats.
             </p>
           </div>
         </form>
@@ -1239,11 +1259,18 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
                       <span className="search-skeleton-line search-skeleton-btn" />
                     </div>
                   </div>
-                  <div className="search-row search-row-skeleton search-row-main">
-                    <span className="search-meta search-skeleton-meta">
-                      <span className="search-skeleton-line search-skeleton-title" />
-                      <span className="search-skeleton-line search-skeleton-sub" />
-                    </span>
+                  <div className="search-item-main-col">
+                    <div className="search-row-wrap">
+                      <div className="search-row search-row-skeleton search-row-main">
+                        <span className="search-meta search-skeleton-meta">
+                          <span className="search-skeleton-line search-skeleton-title" />
+                          <span className="search-skeleton-line search-skeleton-sub" />
+                        </span>
+                      </div>
+                      <div className="search-result-menu search-result-menu-skeleton" aria-hidden>
+                        <span className="search-result-menu-trigger search-skeleton-line search-skeleton-btn" />
+                      </div>
+                    </div>
                   </div>
                 </div>
               </li>
@@ -1283,9 +1310,11 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
                 isThis &&
                 download?.status === "complete" &&
                 Boolean(download.savedItem);
-              const showDownloadActions =
+              const showThumbJobActions =
                 isThis &&
-                (isDownloading ||
+                download?.status !== "streaming" &&
+                (download?.status === "queued" ||
+                  download?.status === "processing" ||
                   download?.status === "saving" ||
                   download?.status === "failed" ||
                   canOpen);
@@ -1304,9 +1333,7 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
                         : download?.status === "complete"
                           ? download.savedItem
                             ? "Saved"
-                            : isStreamPreset(preset)
-                              ? "Playing"
-                              : "Saved"
+                            : "Playing"
                           : download?.status === "failed"
                             ? "Failed"
                             : download?.status === "cancelled"
@@ -1332,7 +1359,7 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
                             ▶
                           </span>
                         )}
-                        {isThis && isDownloading ? (
+                        {isThis && isDownloading && download?.status !== "streaming" ? (
                           <div className="search-thumb-progress-track" aria-hidden>
                             {progressIndeterminate ? (
                               <div className="search-thumb-progress-indeterminate">
@@ -1347,7 +1374,7 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
                           </div>
                         ) : null}
                       </div>
-                      {showDownloadActions ? (
+                      {showThumbJobActions ? (
                         <div className="search-item-actions">
                           <button
                             type="button"
@@ -1393,41 +1420,178 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
                         </div>
                       ) : null}
                     </div>
-                    <button
-                      type="button"
-                      className="search-row search-row-main"
-                      onClick={() => void handleResultTap(result)}
-                      disabled={Boolean(otherActive) || isDownloading}
-                      title={
-                        otherActive
-                          ? "Wait for the current one to finish"
-                          : presetLabel(preset)
-                      }
-                    >
-                      <span className="search-meta">
-                        <span className="search-title">
-                          {result.title}
-                          {libraryVideoIds?.has(result.videoId) ? (
-                            <span className="search-in-library">In library</span>
-                          ) : sessionSavedVideoIds.has(result.videoId) ? (
-                            <span className="search-session-saved">Added this session</span>
-                          ) : null}
-                        </span>
-                        <span className="search-sub">
-                          {result.author}
-                          {views ? ` · ${views}` : ""}
-                          {result.publishedText ? ` · ${result.publishedText}` : ""}
-                        </span>
-                        {isThis ? (
-                          <span className={`search-state state-${download?.status}`}>
-                            {stateLabel}
+                    <div className="search-item-main-col">
+                      <div className="search-row-wrap">
+                        <button
+                          type="button"
+                          className="search-row search-row-main"
+                          onClick={() => void handleResultTap(result)}
+                          disabled={Boolean(otherActive) || isDownloading}
+                          title={
+                            otherActive
+                              ? "Wait for the current one to finish"
+                              : `Stream (${streamTapKind === "video" ? "video" : "audio"})`
+                          }
+                        >
+                          <span className="search-meta">
+                            <span className="search-title">
+                              {result.title}
+                              {libraryVideoIds?.has(result.videoId) ? (
+                                <span className="search-in-library">In library</span>
+                              ) : sessionSavedVideoIds.has(result.videoId) ? (
+                                <span className="search-session-saved">Added this session</span>
+                              ) : null}
+                            </span>
+                            <span className="search-sub">
+                              {result.author}
+                              {views ? ` · ${views}` : ""}
+                              {result.publishedText ? ` · ${result.publishedText}` : ""}
+                            </span>
+                            {isThis ? (
+                              <span className={`search-state state-${download?.status}`}>
+                                {stateLabel}
+                              </span>
+                            ) : null}
+                            {isThis && download?.status === "failed" && friendlyMessage ? (
+                              <span className="search-state-error">{friendlyMessage}</span>
+                            ) : null}
                           </span>
-                        ) : null}
-                        {isThis && download?.status === "failed" && friendlyMessage ? (
-                          <span className="search-state-error">{friendlyMessage}</span>
-                        ) : null}
-                      </span>
-                    </button>
+                        </button>
+                        <details className="search-result-menu">
+                          <summary
+                            className="search-result-menu-trigger"
+                            aria-label="More — play as or save"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            ⋯
+                          </summary>
+                          <div
+                            className="search-result-menu-panel"
+                            role="menu"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              className="search-result-menu-item"
+                              role="menuitem"
+                              disabled={Boolean(otherActive) || isDownloading}
+                              onClick={(event) => {
+                                (
+                                  event.currentTarget.closest(
+                                    "details",
+                                  ) as HTMLDetailsElement | null
+                                )?.removeAttribute("open");
+                                setStreamTapKindUi("audio");
+                                void runStreamForResult(result, "audio");
+                              }}
+                            >
+                              Play as audio
+                            </button>
+                            <button
+                              type="button"
+                              className="search-result-menu-item"
+                              role="menuitem"
+                              disabled={Boolean(otherActive) || isDownloading}
+                              onClick={(event) => {
+                                (
+                                  event.currentTarget.closest(
+                                    "details",
+                                  ) as HTMLDetailsElement | null
+                                )?.removeAttribute("open");
+                                setStreamTapKindUi("video");
+                                void runStreamForResult(result, "video");
+                              }}
+                            >
+                              Play as video
+                            </button>
+                            {androidNative ? (
+                              <>
+                                <div className="search-result-menu-heading">Quick save (phone data)</div>
+                                <button
+                                  type="button"
+                                  className="search-result-menu-item"
+                                  role="menuitem"
+                                  disabled={Boolean(otherActive) || isDownloading}
+                                  onClick={(event) => {
+                                    (
+                                      event.currentTarget.closest(
+                                        "details",
+                                      ) as HTMLDetailsElement | null
+                                    )?.removeAttribute("open");
+                                    void executeDirectDownload({
+                                      videoId: result.videoId,
+                                      title: result.title,
+                                      author: result.author,
+                                      thumbnail: pickThumbnail(result.thumbnails, 480)?.url ?? null,
+                                      durationSeconds: result.lengthSeconds ?? null,
+                                      preset: "direct-audio",
+                                    });
+                                  }}
+                                >
+                                  Quick save audio
+                                </button>
+                                <button
+                                  type="button"
+                                  className="search-result-menu-item"
+                                  role="menuitem"
+                                  disabled={Boolean(otherActive) || isDownloading}
+                                  onClick={(event) => {
+                                    (
+                                      event.currentTarget.closest(
+                                        "details",
+                                      ) as HTMLDetailsElement | null
+                                    )?.removeAttribute("open");
+                                    void executeDirectDownload({
+                                      videoId: result.videoId,
+                                      title: result.title,
+                                      author: result.author,
+                                      thumbnail: pickThumbnail(result.thumbnails, 480)?.url ?? null,
+                                      durationSeconds: result.lengthSeconds ?? null,
+                                      preset: "direct-video",
+                                    });
+                                  }}
+                                >
+                                  Quick save video
+                                </button>
+                              </>
+                            ) : null}
+                            <div className="search-result-menu-heading">Save via server</div>
+                            {WORKER_SAVE_MENU.map((entry) => {
+                              const blocked = isIpRoyalHeavyDownloadDisabledInUi(entry.preset);
+                              return (
+                                <button
+                                  key={entry.preset}
+                                  type="button"
+                                  className="search-result-menu-item"
+                                  role="menuitem"
+                                  disabled={
+                                    Boolean(otherActive) || isDownloading || blocked
+                                  }
+                                  title={
+                                    blocked
+                                      ? "Paused in this build to save proxy quota. Set REACTIVATE_IPROYAL_HEAVY_WORKER_DOWNLOADS in lib/ipRoyalUsage.ts to bring this back."
+                                      : undefined
+                                  }
+                                  onClick={(event) => {
+                                    if (blocked) {
+                                      return;
+                                    }
+                                    (
+                                      event.currentTarget.closest(
+                                        "details",
+                                      ) as HTMLDetailsElement | null
+                                    )?.removeAttribute("open");
+                                    void startWorkerSaveForResult(result, entry.preset);
+                                  }}
+                                >
+                                  {entry.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </details>
+                      </div>
+                    </div>
                   </div>
                 </li>
               );

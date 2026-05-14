@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { isIpRoyalHeavyDownloadDisabledInUi } from "./ipRoyalUsage";
+
 /**
  * App-wide user settings.
  *
@@ -55,7 +57,7 @@ export const DEFAULT_SETTINGS: Settings = {
   audioOnlyDefault: false,
   autoSaveLibrary: true,
   confirmDelete: true,
-  searchPreset: "mp3",
+  searchPreset: "stream-audio",
 };
 
 const KNOWN_PRESETS: SearchPreset[] = [
@@ -113,7 +115,11 @@ function normalizeSearchPreset(value: unknown): SearchPreset {
     typeof value === "string" &&
     KNOWN_PRESETS.includes(value as SearchPreset)
   ) {
-    return value as SearchPreset;
+    const candidate = value as SearchPreset;
+    if (isIpRoyalHeavyDownloadDisabledInUi(candidate)) {
+      return "stream-audio";
+    }
+    return candidate;
   }
   return DEFAULT_SETTINGS.searchPreset;
 }
@@ -177,9 +183,9 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
   {
     type: "select",
     key: "searchPreset",
-    label: "When you tap a result",
+    label: "When you tap a result (advanced)",
     description:
-      "Streaming plays the video right away, ad-free. Saving keeps a copy in your library so you can play it offline.",
+      "On Search, a row tap always streams (audio or video — use the Audio/Video chips). This list is for compatibility and the ⋯ menu. Server-side saves that pull the full file through our worker (MP3 / fixed video) are paused in this build to protect paid proxy quota — set REACTIVATE_IPROYAL_HEAVY_WORKER_DOWNLOADS in lib/ipRoyalUsage.ts to bring them back.",
     section: "Search",
     options: [
       { value: "stream-audio", label: "Play audio" },

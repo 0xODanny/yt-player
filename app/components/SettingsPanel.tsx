@@ -8,6 +8,7 @@ import {
   compareSemanticVersions,
   getDisplayedReleaseVersion,
 } from "@/lib/releaseInfo";
+import { isIpRoyalHeavyDownloadDisabledInUi } from "@/lib/ipRoyalUsage";
 import {
   SETTING_DEFINITIONS,
   filterSettingDefinitionsForPlatform,
@@ -211,7 +212,11 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                         }
                       >
                         {def.options.map((option) => (
-                          <option key={option.value} value={option.value}>
+                          <option
+                            key={option.value}
+                            value={option.value}
+                            disabled={isIpRoyalHeavyDownloadDisabledInUi(option.value)}
+                          >
                             {option.label}
                           </option>
                         ))}
