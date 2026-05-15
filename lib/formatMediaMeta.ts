@@ -45,6 +45,32 @@ export function formatPublishedAgeShort(ms: number | undefined): string | null {
   return `${Math.floor(diffDays / 365)}y`;
 }
 
+/**
+ * One-line upload date for search metadata (subtitle). Prefer worker
+ * `publishedText` when present; otherwise format `publishedAt`.
+ */
+export function formatSearchUploadDateLine(
+  publishedAt: number | undefined,
+  publishedText: string | undefined,
+): string | null {
+  const text = typeof publishedText === "string" ? publishedText.trim() : "";
+  if (text.length > 0) {
+    return text;
+  }
+  if (typeof publishedAt === "number" && Number.isFinite(publishedAt) && publishedAt > 0) {
+    try {
+      return new Date(publishedAt).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 /** When the item was saved to the library (device clock). */
 export function formatLibraryAddedShort(createdAtMs: number): string | null {
   if (typeof createdAtMs !== "number" || !Number.isFinite(createdAtMs) || createdAtMs <= 0) {

@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.16";
+export const APP_RELEASE_VERSION = "1.1.17";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,18 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.17",
+    title: "May 2026",
+    items: [
+      "Search: sort results (relevance, newest/oldest upload, longest/shortest). Upload date on each row when the worker provides it; tighter spacing between thumbnail and text on phones.",
+      "Search ⋯ menu: paused “save via server” choices (MP3 / fixed video through the worker proxy) are hidden until you turn them back on in code — streaming and Android quick-save stay as before.",
+      "Library: sort by date added or duration; small duration and “added” labels on thumbnails.",
+      "Playback: skip back/forward uses the step you pick in Settings; expanded player adds speed and a sleep timer (minutes or after this track); lock-screen skip matches the same step.",
+      "Search downloads keep running if you switch to Library or Download; a dot on the Search tab shows when something is still saving.",
+      "Settings: wider dialog, less cramped text; modal dimming follows your theme (Smoke/Paper) instead of always sage green.",
+    ],
+  },
   {
     version: "1.1.16",
     title: "May 2026",

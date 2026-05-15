@@ -35,7 +35,7 @@ import {
   sortSearchResults,
   type SearchSortMode,
 } from "@/lib/searchSort";
-import { formatPublishedAgeShort } from "@/lib/formatMediaMeta";
+import { formatPublishedAgeShort, formatSearchUploadDateLine } from "@/lib/formatMediaMeta";
 import {
   type SearchPreset,
   useSettings,
@@ -1375,6 +1375,10 @@ export function SearchView({
               const thumb = pickThumbnail(result.thumbnails, 360);
               const length = formatLength(result.lengthSeconds);
               const publishedShort = formatPublishedAgeShort(result.publishedAt);
+              const uploadDateLine = formatSearchUploadDateLine(
+                result.publishedAt,
+                result.publishedText,
+              );
               const views = formatViewCount(result.viewCount);
               const isThis = download?.videoId === result.videoId;
               const isTerminal =
@@ -1535,9 +1539,7 @@ export function SearchView({
                             <span className="search-sub">
                               {result.author}
                               {views ? ` · ${views}` : ""}
-                              {!publishedShort && result.publishedText
-                                ? ` · ${result.publishedText}`
-                                : ""}
+                              {uploadDateLine ? ` · ${uploadDateLine}` : ""}
                             </span>
                             {isThis ? (
                               <span className={`search-state state-${download?.status}`}>
@@ -1647,39 +1649,38 @@ export function SearchView({
                                 </button>
                               </>
                             ) : null}
-                            <div className="search-result-menu-heading">Save via server</div>
-                            {WORKER_SAVE_MENU.map((entry) => {
-                              const blocked = isIpRoyalHeavyDownloadDisabledInUi(entry.preset);
-                              return (
-                                <button
-                                  key={entry.preset}
-                                  type="button"
-                                  className="search-result-menu-item"
-                                  role="menuitem"
-                                  disabled={
-                                    Boolean(otherActive) || isDownloading || blocked
-                                  }
-                                  title={
-                                    blocked
-                                      ? "Paused in this build to save proxy quota. Set REACTIVATE_IPROYAL_HEAVY_WORKER_DOWNLOADS in lib/ipRoyalUsage.ts to bring this back."
-                                      : undefined
-                                  }
-                                  onClick={(event) => {
-                                    if (blocked) {
-                                      return;
-                                    }
-                                    (
-                                      event.currentTarget.closest(
-                                        "details",
-                                      ) as HTMLDetailsElement | null
-                                    )?.removeAttribute("open");
-                                    void startWorkerSaveForResult(result, entry.preset);
-                                  }}
-                                >
-                                  {entry.label}
-                                </button>
-                              );
-                            })}
+                            {WORKER_SAVE_MENU.some(
+                              (entry) =>
+                                !isIpRoyalHeavyDownloadDisabledInUi(entry.preset),
+                            ) ? (
+                              <>
+                                <div className="search-result-menu-heading">
+                                  Save via server
+                                </div>
+                                {WORKER_SAVE_MENU.filter(
+                                  (entry) =>
+                                    !isIpRoyalHeavyDownloadDisabledInUi(entry.preset),
+                                ).map((entry) => (
+                                  <button
+                                    key={entry.preset}
+                                    type="button"
+                                    className="search-result-menu-item"
+                                    role="menuitem"
+                                    disabled={Boolean(otherActive) || isDownloading}
+                                    onClick={(event) => {
+                                      (
+                                        event.currentTarget.closest(
+                                          "details",
+                                        ) as HTMLDetailsElement | null
+                                      )?.removeAttribute("open");
+                                      void startWorkerSaveForResult(result, entry.preset);
+                                    }}
+                                  >
+                                    {entry.label}
+                                  </button>
+                                ))}
+                              </>
+                            ) : null}
                           </div>
                         </details>
                       </div>

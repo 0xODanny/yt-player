@@ -2810,6 +2810,20 @@ body.player-dock-visible .shell {
 }
 
 @media (max-width: 480px) {
+  .search-item-layout {
+    grid-template-columns: 112px 1fr;
+    gap: 8px;
+    column-gap: 8px;
+  }
+
+  .search-thumb-wrap {
+    width: 112px;
+  }
+
+  .search-row.search-row-main .search-meta {
+    padding: 8px 6px 8px 0;
+  }
+
   .search-row {
     grid-template-columns: 112px 1fr;
   }
