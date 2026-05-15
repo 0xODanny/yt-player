@@ -22,6 +22,7 @@ import {
   renameItem,
   type StorageEstimate,
 } from "@/lib/library";
+import { formatLibraryAddedShort } from "@/lib/formatMediaMeta";
 import { shareBlobNative } from "@/lib/nativeShare";
 import {
   canonicalUrlForCurrentPage,
@@ -45,6 +46,43 @@ type LibraryViewProps = {
   reloadKey: number;
 };
 
+type LibrarySortMode = "added_desc" | "added_asc" | "duration_desc" | "duration_asc";
+
+const LIBRARY_SORT_KEY = "yt-local-tool:library-sort-mode";
+
+const LIBRARY_SORT_OPTIONS: Array<{ value: LibrarySortMode; label: string }> = [
+  { value: "added_desc", label: "Newest added" },
+  { value: "added_asc", label: "Oldest added" },
+  { value: "duration_desc", label: "Longest" },
+  { value: "duration_asc", label: "Shortest" },
+];
+
+function loadLibrarySortMode(): LibrarySortMode {
+  if (typeof window === "undefined") {
+    return "added_desc";
+  }
+  try {
+    const raw = window.localStorage.getItem(LIBRARY_SORT_KEY);
+    if (raw && LIBRARY_SORT_OPTIONS.some((o) => o.value === raw)) {
+      return raw as LibrarySortMode;
+    }
+  } catch {
+    // ignore
+  }
+  return "added_desc";
+}
+
+function persistLibrarySortMode(mode: LibrarySortMode) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(LIBRARY_SORT_KEY, mode);
+  } catch {
+    // ignore
+  }
+}
+
 export function LibraryView({ reloadKey }: LibraryViewProps) {
   const { settings } = useSettings();
   const { playLibrary, stop, getActive, setLibraryEndedHandler } = usePlayback();
@@ -56,6 +94,9 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
   const [folderPlayMode, setFolderPlayMode] = useState<
     "off" | "loop_folder" | "repeat_one"
   >("off");
+  const [librarySortMode, setLibrarySortMode] = useState<LibrarySortMode>(() =>
+    typeof window === "undefined" ? "added_desc" : loadLibrarySortMode(),
+  );
   const [movingItem, setMovingItem] = useState<ManifestItem | null>(null);
   const [busy, setBusy] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -88,15 +129,53 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
     void refresh();
   }, [refresh, reloadKey]);
 
+  useEffect(() => {
+    persistLibrarySortMode(librarySortMode);
+  }, [librarySortMode]);
+
   const folders = manifest?.folders ?? [];
   const items = useMemo(() => {
     if (!manifest) {
       return [];
     }
-    return manifest.items
-      .filter((item) => item.folderId === activeFolderId)
-      .sort((a, b) => b.createdAt - a.createdAt);
-  }, [manifest, activeFolderId]);
+    const filtered = manifest.items.filter((item) => item.folderId === activeFolderId);
+    const durationKey = (it: ManifestItem) =>
+      typeof it.duration === "number" && it.duration > 0 ? it.duration : 0;
+    const sorted = [...filtered];
+    switch (librarySortMode) {
+      case "added_desc":
+        sorted.sort((a, b) => b.createdAt - a.createdAt);
+        break;
+      case "added_asc":
+        sorted.sort((a, b) => a.createdAt - b.createdAt);
+        break;
+      case "duration_desc":
+        sorted.sort(
+          (a, b) =>
+            durationKey(b) - durationKey(a) || b.createdAt - a.createdAt,
+        );
+        break;
+      case "duration_asc":
+        sorted.sort((a, b) => {
+          const da = durationKey(a);
+          const db = durationKey(b);
+          if (da === 0 && db === 0) {
+            return b.createdAt - a.createdAt;
+          }
+          if (da === 0) {
+            return 1;
+          }
+          if (db === 0) {
+            return -1;
+          }
+          return da - db || b.createdAt - a.createdAt;
+        });
+        break;
+      default:
+        break;
+    }
+    return sorted;
+  }, [manifest, activeFolderId, librarySortMode]);
 
   useEffect(() => {
     setFolderPlayMode("off");
@@ -529,6 +608,26 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
           </div>
         </div>
 
+        <div className="library-sort-bar">
+          <label className="library-sort-field">
+            <span className="library-sort-label">Sort</span>
+            <select
+              className="library-sort-select"
+              value={librarySortMode}
+              onChange={(event) =>
+                setLibrarySortMode(event.target.value as LibrarySortMode)
+              }
+              aria-label="Sort items in this folder"
+            >
+              {LIBRARY_SORT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
         {items.length === 0 ? (
           <div className="empty-card">
             <p>Nothing here yet.</p>
@@ -540,6 +639,7 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
           <ul className="library-list">
             {items.map((item) => {
               const duration = formatDurationShort(item.duration);
+              const addedShort = formatLibraryAddedShort(item.createdAt);
               return (
                 <li key={item.id} className={`library-item${item.missing ? " missing" : ""}`}>
                   <button
@@ -551,13 +651,25 @@ export function LibraryView({ reloadKey }: LibraryViewProps) {
                     disabled={item.missing}
                     title={item.missing ? "File is missing — download again to play" : "Play"}
                   >
-                    {item.thumbnail ? (
-                      <img className="library-thumb" src={item.thumbnail} alt="" />
-                    ) : (
-                      <span className="library-thumb fallback" aria-hidden>
-                        {item.format.toUpperCase()}
-                      </span>
-                    )}
+                    <div className="library-thumb-wrap">
+                      {duration ? (
+                        <span className="library-thumb-badge library-thumb-badge--duration">
+                          {duration}
+                        </span>
+                      ) : null}
+                      {addedShort ? (
+                        <span className="library-thumb-badge library-thumb-badge--age">
+                          {addedShort}
+                        </span>
+                      ) : null}
+                      {item.thumbnail ? (
+                        <img className="library-thumb" src={item.thumbnail} alt="" />
+                      ) : (
+                        <span className="library-thumb fallback" aria-hidden>
+                          {item.format.toUpperCase()}
+                        </span>
+                      )}
+                    </div>
                     <span className="library-meta">
                       <span className="library-title">{item.title}</span>
                       <span className="library-sub">

@@ -42,6 +42,8 @@ export type SearchPreset =
   | "direct-audio"
   | "direct-video";
 
+export type SkipSecondsOption = 5 | 10 | 15 | 30;
+
 export type Settings = {
   theme: AppTheme;
   pipAuto: boolean;
@@ -49,6 +51,10 @@ export type Settings = {
   autoSaveLibrary: boolean;
   confirmDelete: boolean;
   searchPreset: SearchPreset;
+  /** Skip back / forward buttons and headset double-tap step size. */
+  skipSeconds: SkipSecondsOption;
+  /** Default speed when a track starts (user can change per session in the player). */
+  preferredPlaybackRate: number;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -58,6 +64,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoSaveLibrary: true,
   confirmDelete: true,
   searchPreset: "stream-audio",
+  skipSeconds: 10,
+  preferredPlaybackRate: 1,
 };
 
 const KNOWN_PRESETS: SearchPreset[] = [
@@ -124,6 +132,24 @@ function normalizeSearchPreset(value: unknown): SearchPreset {
   return DEFAULT_SETTINGS.searchPreset;
 }
 
+const SKIP_SECONDS_VALUES: SkipSecondsOption[] = [5, 10, 15, 30];
+
+function normalizeSkipSeconds(value: unknown): SkipSecondsOption {
+  const n = Number(value);
+  return SKIP_SECONDS_VALUES.includes(n as SkipSecondsOption)
+    ? (n as SkipSecondsOption)
+    : DEFAULT_SETTINGS.skipSeconds;
+}
+
+const PLAYBACK_RATE_VALUES = [0.75, 1, 1.25, 1.5, 1.75, 2] as const;
+
+function normalizePreferredPlaybackRate(value: unknown): number {
+  const n = Number(value);
+  return PLAYBACK_RATE_VALUES.includes(n as (typeof PLAYBACK_RATE_VALUES)[number])
+    ? n
+    : DEFAULT_SETTINGS.preferredPlaybackRate;
+}
+
 export type SettingDefinitionToggle = {
   type?: "toggle";
   key: keyof Settings;
@@ -179,6 +205,36 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     description:
       "Open videos in audio-only mode so playback continues with the screen off and uses less battery. You can still switch to video inside the player.",
     section: "Playback",
+  },
+  {
+    type: "select",
+    key: "skipSeconds",
+    label: "Skip back / forward step",
+    description:
+      "How many seconds the ± skip buttons and headset seek actions jump each tap.",
+    section: "Playback",
+    options: [
+      { value: "5", label: "5 seconds" },
+      { value: "10", label: "10 seconds" },
+      { value: "15", label: "15 seconds" },
+      { value: "30", label: "30 seconds" },
+    ],
+  },
+  {
+    type: "select",
+    key: "preferredPlaybackRate",
+    label: "Default playback speed",
+    description:
+      "Starting speed for new playback. You can still change speed from the player toolbar for the current track.",
+    section: "Playback",
+    options: [
+      { value: "0.75", label: "0.75×" },
+      { value: "1", label: "1× (normal)" },
+      { value: "1.25", label: "1.25×" },
+      { value: "1.5", label: "1.5×" },
+      { value: "1.75", label: "1.75×" },
+      { value: "2", label: "2×" },
+    ],
   },
   {
     type: "select",
@@ -264,6 +320,10 @@ function loadSettings(): Settings {
     const merged: Settings = { ...DEFAULT_SETTINGS, ...parsed };
     merged.theme = normalizeTheme(merged.theme);
     merged.searchPreset = normalizeSearchPreset(merged.searchPreset);
+    merged.skipSeconds = normalizeSkipSeconds(merged.skipSeconds);
+    merged.preferredPlaybackRate = normalizePreferredPlaybackRate(
+      merged.preferredPlaybackRate,
+    );
     return merged;
   } catch {
     return DEFAULT_SETTINGS;
@@ -325,7 +385,21 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const update = useCallback(
     <K extends keyof Settings>(key: K, value: Settings[K]) => {
-      setSettings((current) => ({ ...current, [key]: value }));
+      setSettings((current) => {
+        if (key === "skipSeconds") {
+          return {
+            ...current,
+            skipSeconds: normalizeSkipSeconds(value),
+          };
+        }
+        if (key === "preferredPlaybackRate") {
+          return {
+            ...current,
+            preferredPlaybackRate: normalizePreferredPlaybackRate(value),
+          };
+        }
+        return { ...current, [key]: value };
+      });
     },
     [],
   );

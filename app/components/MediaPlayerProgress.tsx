@@ -63,6 +63,39 @@ function readBufferedEnd(media: HTMLMediaElement): number {
   return 0;
 }
 
+/**
+ * Nudge playback by a signed delta in seconds (matches lock-screen seek
+ * behaviour in MediaPlayer’s MediaSession handlers).
+ */
+export function seekMediaByDeltaSeconds(
+  media: HTMLMediaElement | null,
+  deltaSec: number,
+): void {
+  if (!media || !Number.isFinite(deltaSec) || deltaSec === 0) {
+    return;
+  }
+  if (deltaSec < 0) {
+    media.currentTime = Math.max(0, media.currentTime + deltaSec);
+    return;
+  }
+  const d = media.duration;
+  let cap: number;
+  if (Number.isFinite(d) && d > 0) {
+    cap = d;
+  } else {
+    try {
+      if (media.seekable && media.seekable.length > 0) {
+        cap = media.seekable.end(media.seekable.length - 1);
+      } else {
+        cap = media.currentTime + deltaSec;
+      }
+    } catch {
+      cap = media.currentTime + deltaSec;
+    }
+  }
+  media.currentTime = Math.min(media.currentTime + deltaSec, cap);
+}
+
 export function formatMediaClock(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) {
     return "--:--";
@@ -242,6 +275,7 @@ type StreamExpandedProgressChromeProps = {
   objectUrl: string;
   streamUrl: string;
   useAudioElement: boolean;
+  skipSeconds: number;
 };
 
 export function StreamExpandedProgressChrome({
@@ -249,6 +283,7 @@ export function StreamExpandedProgressChrome({
   objectUrl,
   streamUrl,
   useAudioElement,
+  skipSeconds,
 }: StreamExpandedProgressChromeProps) {
   const syncKey = `${objectUrl}|${streamUrl}|${useAudioElement ? "a" : "v"}`;
   const dockProgress = usePlaybackProgressSync(mediaRef, syncKey);
@@ -274,6 +309,15 @@ export function StreamExpandedProgressChrome({
       <div className="player-stream-chrome-row">
         <button
           type="button"
+          className="player-seek-skip"
+          aria-label={`Back ${skipSeconds} seconds`}
+          title={`−${skipSeconds}s`}
+          onClick={() => seekMediaByDeltaSeconds(mediaRef.current, -skipSeconds)}
+        >
+          −{skipSeconds}s
+        </button>
+        <button
+          type="button"
           className="player-stream-playpause"
           aria-label={dockProgress.paused ? "Play" : "Pause"}
           onClick={() => {
@@ -293,6 +337,15 @@ export function StreamExpandedProgressChrome({
           ) : (
             <span className="player-dock-pause-glyph" aria-hidden />
           )}
+        </button>
+        <button
+          type="button"
+          className="player-seek-skip"
+          aria-label={`Forward ${skipSeconds} seconds`}
+          title={`+${skipSeconds}s`}
+          onClick={() => seekMediaByDeltaSeconds(mediaRef.current, skipSeconds)}
+        >
+          +{skipSeconds}s
         </button>
         <span className="player-stream-time">
           {formatMediaClock(cur)} /{" "}
@@ -333,6 +386,7 @@ type MinimizedProgressDockProps = {
   itemId: string;
   streamUrl: string;
   useAudioElement: boolean;
+  skipSeconds: number;
   title: string;
   thumbnail?: string;
   formatLabel: string;
@@ -346,6 +400,7 @@ export function MinimizedProgressDock({
   itemId,
   streamUrl,
   useAudioElement,
+  skipSeconds,
   title,
   thumbnail,
   formatLabel,
@@ -379,6 +434,26 @@ export function MinimizedProgressDock({
       </div>
       <div className="player-dock-center">
         <p className="player-dock-title">{title}</p>
+        <div className="player-dock-seek-row" role="group" aria-label="Seek">
+          <button
+            type="button"
+            className="player-seek-skip player-seek-skip--compact"
+            aria-label={`Back ${skipSeconds} seconds`}
+            title={`−${skipSeconds}s`}
+            onClick={() => seekMediaByDeltaSeconds(mediaRef.current, -skipSeconds)}
+          >
+            −{skipSeconds}s
+          </button>
+          <button
+            type="button"
+            className="player-seek-skip player-seek-skip--compact"
+            aria-label={`Forward ${skipSeconds} seconds`}
+            title={`+${skipSeconds}s`}
+            onClick={() => seekMediaByDeltaSeconds(mediaRef.current, skipSeconds)}
+          >
+            +{skipSeconds}s
+          </button>
+        </div>
         <div className="player-dock-scrub">
           <div
             className={`player-dock-track${dockProgress.waiting && dur <= 0 ? " player-dock-track--busy" : ""}`}

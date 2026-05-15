@@ -31,6 +31,12 @@ import {
   type SearchResult,
 } from "@/lib/search";
 import {
+  SEARCH_SORT_MODES,
+  sortSearchResults,
+  type SearchSortMode,
+} from "@/lib/searchSort";
+import { formatPublishedAgeShort } from "@/lib/formatMediaMeta";
+import {
   type SearchPreset,
   useSettings,
 } from "@/lib/settings";
@@ -53,6 +59,7 @@ import {
  * they left off.
  */
 const SEARCH_STATE_KEY = "yt-local-tool:search-state";
+const SEARCH_SORT_KEY = "yt-local-tool:search-sort-mode";
 const RECENT_SEARCHES_KEY = "yt-local-tool:recent-searches";
 const RECENT_SEARCHES_LIMIT = 8;
 
@@ -121,10 +128,41 @@ function saveRecentSearches(queries: string[]) {
   }
 }
 
+function loadSearchSortMode(): SearchSortMode {
+  if (typeof window === "undefined") {
+    return "relevance";
+  }
+  try {
+    const raw = window.localStorage.getItem(SEARCH_SORT_KEY);
+    if (!raw) {
+      return "relevance";
+    }
+    if (SEARCH_SORT_MODES.some((m) => m.value === raw)) {
+      return raw as SearchSortMode;
+    }
+  } catch {
+    // ignore
+  }
+  return "relevance";
+}
+
+function persistSearchSortMode(mode: SearchSortMode) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(SEARCH_SORT_KEY, mode);
+  } catch {
+    // ignore
+  }
+}
+
 type SearchViewProps = {
   onLibraryChanged: () => void;
   /** YouTube video ids already saved anywhere in the library (any folder). */
   libraryVideoIds?: ReadonlySet<string>;
+  /** True while a Search-tab save/download is in progress (for tab chrome). */
+  onSearchDownloadActiveChange?: (active: boolean) => void;
 };
 
 type DownloadState = {
@@ -268,7 +306,11 @@ const LEGACY_PRESET_CHIP_OPTIONS: PresetOption[] = [
   { value: "direct-video", label: "Quick video (data)", androidNativeOnly: true },
 ];
 
-export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProps) {
+export function SearchView({
+  onLibraryChanged,
+  libraryVideoIds,
+  onSearchDownloadActiveChange,
+}: SearchViewProps) {
   const { settings, update } = useSettings();
   const { playLibrary, playStream } = usePlayback();
   const [query, setQuery] = useState("");
@@ -315,6 +357,31 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
    * requested API limit). Cleared when the request finishes so we never flash
    * an empty list — previous results stay in state until replaced.
    */
+  const [searchSortMode, setSearchSortMode] = useState<SearchSortMode>(() =>
+    typeof window === "undefined" ? "relevance" : loadSearchSortMode(),
+  );
+
+  useEffect(() => {
+    persistSearchSortMode(searchSortMode);
+  }, [searchSortMode]);
+
+  const displayedResults = useMemo(
+    () => sortSearchResults(results, query, searchSortMode),
+    [results, query, searchSortMode],
+  );
+
+  useEffect(() => {
+    if (!onSearchDownloadActiveChange) {
+      return;
+    }
+    const active =
+      download != null &&
+      download.status !== "complete" &&
+      download.status !== "failed" &&
+      download.status !== "cancelled";
+    onSearchDownloadActiveChange(active);
+  }, [download, onSearchDownloadActiveChange]);
+
   const [searchSkeletonRows, setSearchSkeletonRows] = useState<number | null>(null);
 
   useEffect(() => {
@@ -1279,15 +1346,35 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
         </section>
       ) : results.length > 0 ? (
         <section className="panel">
-          <div className="section-heading">
+          <div className="section-heading section-heading--split">
             <h2>Results</h2>
-            <span className="job-id">{results.length} videos</span>
+            <div className="section-heading-side">
+              <label className="search-sort-field">
+                <span className="search-sort-field-label">Sort</span>
+                <select
+                  className="search-sort-select"
+                  aria-label="Sort results"
+                  value={searchSortMode}
+                  onChange={(event) =>
+                    setSearchSortMode(event.target.value as SearchSortMode)
+                  }
+                >
+                  {SEARCH_SORT_MODES.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span className="job-id">{results.length} videos</span>
+            </div>
           </div>
 
           <ul className="search-list">
-            {results.map((result) => {
+            {displayedResults.map((result) => {
               const thumb = pickThumbnail(result.thumbnails, 360);
               const length = formatLength(result.lengthSeconds);
+              const publishedShort = formatPublishedAgeShort(result.publishedAt);
               const views = formatViewCount(result.viewCount);
               const isThis = download?.videoId === result.videoId;
               const isTerminal =
@@ -1346,6 +1433,9 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
                       <div className="search-thumb-wrap">
                         {length ? (
                           <span className="search-duration">{length}</span>
+                        ) : null}
+                        {publishedShort ? (
+                          <span className="search-thumb-age">{publishedShort}</span>
                         ) : null}
                         {thumb ? (
                           <img
@@ -1445,7 +1535,9 @@ export function SearchView({ onLibraryChanged, libraryVideoIds }: SearchViewProp
                             <span className="search-sub">
                               {result.author}
                               {views ? ` · ${views}` : ""}
-                              {result.publishedText ? ` · ${result.publishedText}` : ""}
+                              {!publishedShort && result.publishedText
+                                ? ` · ${result.publishedText}`
+                                : ""}
                             </span>
                             {isThis ? (
                               <span className={`search-state state-${download?.status}`}>

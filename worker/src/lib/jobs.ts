@@ -395,8 +395,43 @@ export type WorkerSearchResult = {
   viewCount?: number;
   description?: string;
   thumbnail?: string;
+  /** Epoch ms (UTC) for upload / premiere when yt-dlp exposes it — used for sorting. */
+  publishedAt?: number;
+  /** Short human label derived from `publishedAt` (also returned for clients that skip local formatting). */
   publishedText?: string;
 };
+
+function publishedAtFromFlatEntry(entry: Record<string, unknown>): number | undefined {
+  const rt = entry.release_timestamp;
+  if (typeof rt === "number" && Number.isFinite(rt) && rt > 0) {
+    return Math.round(rt * 1000);
+  }
+  const ts = entry.timestamp;
+  if (typeof ts === "number" && Number.isFinite(ts) && ts > 0) {
+    return Math.round(ts * 1000);
+  }
+  const ud = entry.upload_date;
+  if (typeof ud === "string" && /^\d{8}$/.test(ud)) {
+    const y = Number(ud.slice(0, 4));
+    const m = Number(ud.slice(4, 6)) - 1;
+    const d = Number(ud.slice(6, 8));
+    if (Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(d)) {
+      return Date.UTC(y, m, d);
+    }
+  }
+  return undefined;
+}
+
+function publishedTextFromMs(ms: number | undefined): string | undefined {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) {
+    return undefined;
+  }
+  try {
+    return new Date(ms).toISOString().slice(0, 10);
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Run a YouTube search through yt-dlp's `ytsearch` URL prefix. This rides on
@@ -482,6 +517,9 @@ export async function searchYouTube(
         ? entry.thumbnail
         : `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
 
+    const publishedAt = publishedAtFromFlatEntry(entry);
+    const publishedText = publishedTextFromMs(publishedAt);
+
     results.push({
       videoId: id,
       title,
@@ -498,6 +536,8 @@ export async function searchYouTube(
       description:
         typeof entry.description === "string" ? entry.description : undefined,
       thumbnail,
+      publishedAt,
+      publishedText,
     });
   }
 

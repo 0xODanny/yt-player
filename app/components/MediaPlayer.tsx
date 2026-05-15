@@ -12,8 +12,11 @@ import type { PlaybackLayout } from "@/lib/playback";
 
 import {
   MinimizedProgressDock,
+  seekMediaByDeltaSeconds,
   StreamExpandedProgressChrome,
 } from "./MediaPlayerProgress";
+
+type SleepTimerChoice = "off" | "15" | "30" | "60" | "track";
 
 /**
  * Either a saved library item (plays from OPFS via a blob URL) OR a live
@@ -129,7 +132,7 @@ export function MediaPlayer({
   repeatOne = false,
   onLibraryPlaybackEnded,
 }: MediaPlayerProps) {
-  const { settings } = useSettings();
+  const { settings, update } = useSettings();
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -138,6 +141,8 @@ export function MediaPlayer({
   const [audioOnly, setAudioOnly] = useState<boolean>(false);
   const [isPip, setIsPip] = useState(false);
   const [pipAvailable, setPipAvailable] = useState<boolean>(false);
+  const [playbackRate, setPlaybackRate] = useState(settings.preferredPlaybackRate);
+  const [sleepTimerChoice, setSleepTimerChoice] = useState<SleepTimerChoice>("off");
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLMediaElement | null>(null);
   const bindAudioRef = useCallback((node: HTMLAudioElement | null) => {
@@ -148,6 +153,7 @@ export function MediaPlayer({
   }, []);
   const onLibraryEndedRef = useRef(onLibraryPlaybackEnded);
   const wasPlayingBeforeBackgroundRef = useRef(false);
+  const sleepTimerChoiceRef = useRef<SleepTimerChoice>("off");
   onLibraryEndedRef.current = onLibraryPlaybackEnded;
 
   // Whichever source is set drives the player. `stream` wins if both are
@@ -174,7 +180,40 @@ export function MediaPlayer({
         }
       : null;
 
-  // Sync the per-session audio-only each time a new playable opens.
+  // New source: reset per-session speed to the default and clear sleep timer.
+  useEffect(() => {
+    if (!playable) {
+      return;
+    }
+    setPlaybackRate(settings.preferredPlaybackRate);
+    setSleepTimerChoice("off");
+    sleepTimerChoiceRef.current = "off";
+  }, [playable?.id, settings.preferredPlaybackRate, playable]);
+
+  useEffect(() => {
+    if (sleepTimerChoice !== "15" && sleepTimerChoice !== "30" && sleepTimerChoice !== "60") {
+      return;
+    }
+    const mins = Number(sleepTimerChoice);
+    const deadline = Date.now() + mins * 60_000;
+    const tick = () => {
+      if (Date.now() >= deadline) {
+        const el = mediaRef.current;
+        if (el) {
+          el.pause();
+        }
+        setSleepTimerChoice("off");
+      }
+    };
+    const id = window.setInterval(tick, 1500);
+    tick();
+    return () => window.clearInterval(id);
+  }, [sleepTimerChoice]);
+
+  useEffect(() => {
+    sleepTimerChoiceRef.current = sleepTimerChoice;
+  }, [sleepTimerChoice]);
+
   // On Android APK, library *video* files default to audio-only so we use
   // an <audio> element first — WebView often pauses <video> on blob URLs
   // when the screen locks. Streams still follow the global default only.
@@ -197,6 +236,14 @@ export function MediaPlayer({
   // of a <video>. iOS Safari and Android Chrome both happily play the
   // audio track of an mp4 via the <audio> tag.
   const useAudioElement = !!playable && (playable.type === "audio" || audioOnly);
+
+  useEffect(() => {
+    const el = mediaRef.current;
+    if (!el || !objectUrl) {
+      return;
+    }
+    el.playbackRate = playbackRate;
+  }, [objectUrl, playbackRate, useAudioElement]);
 
   // Some browsers defer autoplay on <video> until after layout (especially
   // when controls are custom). One nudge after mount helps stream video
@@ -379,19 +426,12 @@ export function MediaPlayer({
       el.pause();
     });
     safeSet("seekbackward", (details) => {
-      const offset = details.seekOffset ?? 10;
-      el.currentTime = Math.max(0, el.currentTime - offset);
+      const offset = details.seekOffset ?? settings.skipSeconds;
+      seekMediaByDeltaSeconds(el, -offset);
     });
     safeSet("seekforward", (details) => {
-      const offset = details.seekOffset ?? 10;
-      const d = el.duration;
-      const cap =
-        Number.isFinite(d) && d > 0
-          ? d
-          : el.seekable.length > 0
-            ? el.seekable.end(el.seekable.length - 1)
-            : el.currentTime + offset;
-      el.currentTime = Math.min(el.currentTime + offset, cap);
+      const offset = details.seekOffset ?? settings.skipSeconds;
+      seekMediaByDeltaSeconds(el, offset);
     });
     safeSet("seekto", (details) => {
       if (typeof details.seekTime === "number") {
@@ -417,7 +457,7 @@ export function MediaPlayer({
         // ignore
       });
     };
-  }, [playable, objectUrl, useAudioElement]);
+  }, [playable, objectUrl, useAudioElement, settings.skipSeconds]);
 
   // Reflect playback state to the OS (so the lock-screen widget shows
   // the right play/pause icon, and so the Android foreground service
@@ -546,6 +586,10 @@ export function MediaPlayer({
         window.localStorage.removeItem(storageKey);
       } catch {
         // ignore
+      }
+      if (sleepTimerChoiceRef.current === "track") {
+        setSleepTimerChoice("off");
+        return;
       }
       if (
         playable?.kind === "library" &&
@@ -885,6 +929,79 @@ export function MediaPlayer({
             </span>
           </div>
 
+          {expanded ? (
+            <div
+              className="player-toolbar-controls"
+              role="group"
+              aria-label="Playback options"
+            >
+              <label className="player-toolbar-field">
+                <span className="player-toolbar-field-label">Speed</span>
+                <select
+                  className="player-toolbar-select"
+                  aria-label="Playback speed"
+                  value={String(playbackRate)}
+                  onChange={(event) => {
+                    const next = Number(event.target.value);
+                    setPlaybackRate(next);
+                    update("preferredPlaybackRate", next as never);
+                  }}
+                >
+                  <option value="0.75">0.75×</option>
+                  <option value="1">1×</option>
+                  <option value="1.25">1.25×</option>
+                  <option value="1.5">1.5×</option>
+                  <option value="1.75">1.75×</option>
+                  <option value="2">2×</option>
+                </select>
+              </label>
+              <label className="player-toolbar-field">
+                <span className="player-toolbar-field-label">Sleep</span>
+                <select
+                  className="player-toolbar-select"
+                  aria-label="Sleep timer"
+                  value={sleepTimerChoice}
+                  onChange={(event) =>
+                    setSleepTimerChoice(event.target.value as SleepTimerChoice)
+                  }
+                >
+                  <option value="off">Off</option>
+                  <option value="15">In 15 min</option>
+                  <option value="30">In 30 min</option>
+                  <option value="60">In 60 min</option>
+                  <option value="track">After this track</option>
+                </select>
+              </label>
+            </div>
+          ) : null}
+
+          {expanded && !loading && !error && objectUrl && !isStreaming ? (
+            <div className="player-expanded-seek" role="group" aria-label="Seek">
+              <button
+                type="button"
+                className="player-seek-skip"
+                aria-label={`Back ${settings.skipSeconds} seconds`}
+                title={`−${settings.skipSeconds}s`}
+                onClick={() =>
+                  seekMediaByDeltaSeconds(mediaRef.current, -settings.skipSeconds)
+                }
+              >
+                −{settings.skipSeconds}s
+              </button>
+              <button
+                type="button"
+                className="player-seek-skip"
+                aria-label={`Forward ${settings.skipSeconds} seconds`}
+                title={`+${settings.skipSeconds}s`}
+                onClick={() =>
+                  seekMediaByDeltaSeconds(mediaRef.current, settings.skipSeconds)
+                }
+              >
+                +{settings.skipSeconds}s
+              </button>
+            </div>
+          ) : null}
+
           <div className="player-body">
             {loading ? <p className="player-status">Loading…</p> : null}
             {error ? <p className="player-status player-error">{error}</p> : null}
@@ -914,6 +1031,7 @@ export function MediaPlayer({
                       objectUrl={objectUrl}
                       streamUrl={stream?.url ?? ""}
                       useAudioElement={useAudioElement}
+                      skipSeconds={settings.skipSeconds}
                     />
                   ) : null}
                 </div>
@@ -936,6 +1054,7 @@ export function MediaPlayer({
                       objectUrl={objectUrl}
                       streamUrl={stream?.url ?? ""}
                       useAudioElement={useAudioElement}
+                      skipSeconds={settings.skipSeconds}
                     />
                   ) : null}
                 </div>
@@ -952,6 +1071,7 @@ export function MediaPlayer({
           itemId={item?.id ?? ""}
           streamUrl={stream?.url ?? ""}
           useAudioElement={useAudioElement}
+          skipSeconds={settings.skipSeconds}
           title={playable.title}
           thumbnail={playable.thumbnail}
           formatLabel={playable.format.toUpperCase()}

@@ -283,6 +283,7 @@ export default function HomePage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tipsOpen, setTipsOpen] = useState(false);
   const [pasteHint, setPasteHint] = useState<string | null>(null);
+  const [searchDownloadActive, setSearchDownloadActive] = useState(false);
   const autoSavedJobIds = useRef<Set<string>>(new Set());
   const { settings } = useSettings();
 
@@ -874,10 +875,16 @@ export default function HomePage() {
           type="button"
           role="tab"
           aria-selected={tab === "search"}
+          aria-label={
+            searchDownloadActive ? "Search — download in progress" : "Search"
+          }
           className={`tab${tab === "search" ? " active" : ""}`}
           onClick={() => setTab("search")}
         >
-          Search
+          <span>Search</span>
+          {searchDownloadActive ? (
+            <span className="tab-busy-dot" title="Search download in progress" aria-hidden />
+          ) : null}
         </button>
         <button
           type="button"
@@ -899,12 +906,13 @@ export default function HomePage() {
         </button>
       </nav>
 
-      {tab === "search" ? (
+      <div hidden={tab !== "search"}>
         <SearchView
           libraryVideoIds={libraryVideoIds}
           onLibraryChanged={() => setLibraryReloadKey((current) => current + 1)}
+          onSearchDownloadActiveChange={setSearchDownloadActive}
         />
-      ) : null}
+      </div>
 
       <div hidden={tab !== "library"}>
         <LibraryView reloadKey={libraryReloadKey} />

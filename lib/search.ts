@@ -22,6 +22,9 @@ export type SearchResult = {
   viewCount?: number;
   description?: string;
   thumbnails: SearchResultThumbnail[];
+  /** Epoch ms when the video was uploaded / premiered (from yt-dlp). */
+  publishedAt?: number;
+  /** Optional server-provided label; UI prefers formatting from `publishedAt`. */
   publishedText?: string;
 };
 
@@ -35,6 +38,7 @@ type WorkerSearchPayload = {
     viewCount?: number;
     description?: string;
     thumbnail?: string;
+    publishedAt?: number;
     publishedText?: string;
   }>;
   error?: string;
@@ -122,6 +126,10 @@ export async function searchVideos(
     lengthSeconds: entry.lengthSeconds,
     viewCount: entry.viewCount,
     description: entry.description,
+    publishedAt:
+      typeof entry.publishedAt === "number" && Number.isFinite(entry.publishedAt)
+        ? entry.publishedAt
+        : undefined,
     publishedText: entry.publishedText,
     thumbnails: entry.thumbnail
       ? [{ url: entry.thumbnail, width: 480, height: 360 }]
