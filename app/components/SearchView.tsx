@@ -42,7 +42,6 @@ import {
 } from "@/lib/settings";
 import { fetchStreamSource } from "@/lib/stream";
 import {
-  REACTIVATE_IPROYAL_HEAVY_WORKER_DOWNLOADS,
   isIpRoyalHeavyDownloadDisabledInUi,
 } from "@/lib/ipRoyalUsage";
 import {
@@ -263,17 +262,6 @@ function presetLabel(preset: SearchPreset): string {
   }
 }
 
-type PresetOption = {
-  value: SearchPreset;
-  label: string;
-  /**
-   * When true, hide the chip unless the runtime is the Android
-   * Capacitor wrapper. See lib/nativeDownload.ts for why direct-*
-   * presets are platform-gated.
-   */
-  androidNativeOnly?: boolean;
-};
-
 /**
  * Worker “save to library” choices for the ⋯ menu (MP3 + fixed video).
  * IPRoyal-heavy: full file is pulled on the worker while `YT_DLP_PROXY`
@@ -287,23 +275,6 @@ const WORKER_SAVE_MENU: Array<{ preset: SearchPreset; label: string }> = [
   { preset: "video-360p", label: "Save as 360p video" },
   { preset: "video-720p", label: "Save as 720p video" },
   { preset: "video-1080p", label: "Save as 1080p video" },
-];
-
-/**
- * @deprecated Preset chip strip — kept for REACTIVATE_IPROYAL_HEAVY_WORKER_DOWNLOADS.
- * When true, we could render these again next to Audio/Video. See lib/ipRoyalUsage.ts.
- */
-const LEGACY_PRESET_CHIP_OPTIONS: PresetOption[] = [
-  { value: "stream-audio", label: "Play audio" },
-  { value: "stream-video", label: "Play video" },
-  { value: "mp3", label: "Save MP3" },
-  { value: "video-144p", label: "Save 144p" },
-  { value: "video-240p", label: "Save 240p" },
-  { value: "video-360p", label: "Save 360p" },
-  { value: "video-720p", label: "Save 720p" },
-  { value: "video-1080p", label: "Save 1080p" },
-  { value: "direct-audio", label: "Quick audio (data)", androidNativeOnly: true },
-  { value: "direct-video", label: "Quick video (data)", androidNativeOnly: true },
 ];
 
 export function SearchView({
@@ -978,7 +949,7 @@ export function SearchView({
         videoId: result.videoId,
         status: "streaming",
         progress: 0,
-        message: "Resolving stream… (can take 1–2 minutes on slow mobile data)",
+        message: "Resolving stream…",
       });
       try {
         const source = await fetchStreamSource(url, streamType);
@@ -990,6 +961,7 @@ export function SearchView({
             thumbnail:
               source.thumbnail ||
               pickThumbnail(result.thumbnails, 480)?.url,
+            duration: source.duration ?? result.lengthSeconds ?? null,
           },
         });
         setDownload({
@@ -1212,43 +1184,6 @@ export function SearchView({
                 ×
               </button>
             ) : null}
-          </div>
-
-          <div className="search-presets" role="radiogroup" aria-label="Default row tap">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={streamTapKind === "audio"}
-              className={`folder-chip${streamTapKind === "audio" ? " active" : ""}`}
-              onClick={() => setStreamTapKindUi("audio")}
-            >
-              Audio
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={streamTapKind === "video"}
-              className={`folder-chip${streamTapKind === "video" ? " active" : ""}`}
-              onClick={() => setStreamTapKindUi("video")}
-            >
-              Video
-            </button>
-            {REACTIVATE_IPROYAL_HEAVY_WORKER_DOWNLOADS
-              ? LEGACY_PRESET_CHIP_OPTIONS.filter(
-                  (option) => !option.androidNativeOnly || androidNative,
-                ).map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="radio"
-                    aria-checked={preset === option.value}
-                    className={`folder-chip${preset === option.value ? " active" : ""}`}
-                    onClick={() => update("searchPreset", option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))
-              : null}
           </div>
 
           <div className="actions">

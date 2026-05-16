@@ -235,6 +235,24 @@ function friendlyJobMessage(
     if (lower.includes("requested format is not available")) {
       return "That quality isn't available for this video. Pick a different one.";
     }
+
+    if (
+      lower.includes("410") ||
+      lower.includes("gone") ||
+      lower.includes("404") ||
+      lower.includes("not found")
+    ) {
+      return "That page is gone, removed, or the site won't let our server open it. Try Search to stream, or paste a YouTube or direct .mp4 / .mp3 link here.";
+    }
+
+    if (
+      lower.includes("403") ||
+      lower.includes("forbidden") ||
+      lower.includes("unable to download webpage") ||
+      lower.includes("http error")
+    ) {
+      return "The site blocked the download from our server. YouTube and direct file links (.mp4, .mp3) usually work — for other sites, try Search and tap Play instead.";
+    }
   }
 
   // Never render anything that looks like a `user:password@host` URL

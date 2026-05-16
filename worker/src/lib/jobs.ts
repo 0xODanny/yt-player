@@ -710,20 +710,18 @@ async function doResolveStreamUrl(
   // match.
   const playerClients = "ios,tv,mweb,android";
 
-  // Format selection chain. itag 18 / 22 sit at the front because
-  // they're the most reliable single-file progressive streams
-  // (predate the PO Token era). HLS / muxed-mp4 branches are kept
-  // as preferred picks for the small minority of videos that still
-  // expose them. Audio-only: prefer **140** (AAC m4a) first — it is
-  // the most compatible pick for iOS Safari and cellular playback;
-  // some `bestaudio` variants are awkward on long mixes or weak links.
+  // Format selection chain. HLS is best when available on iOS because it
+  // starts quickly and continues buffering in small segments. Progressive
+  // itag 18 / 22 are the reliable fallback single-file streams. Avoid
+  // split audio+video selections here: a plain <video>/<audio> element can
+  // only play one URL.
   const formatSelector =
     type === "audio"
       ? "140/ba[ext=m4a][acodec^=mp4a]/ba[acodec^=mp4a]/18/ba*/b"
-      : "best[protocol*=m3u8]/b[ext=mp4][acodec!=none][vcodec!=none]/18/22/ba*+bv*/b";
+      : "best[protocol*=m3u8]/b[ext=mp4][acodec!=none][vcodec!=none]/18/22/b[acodec!=none][vcodec!=none]";
 
   const args = [
-    "--dump-single-json",
+    "--get-url",
     "--no-playlist",
     "--no-warnings",
     "-f",
@@ -770,23 +768,12 @@ async function doResolveStreamUrl(
     throw new Error(cleaned || "yt-dlp failed to resolve a stream URL.");
   }
 
-  const info = JSON.parse(stdout) as YtDlpVideoInfo & {
-    url?: string;
-    requested_formats?: Array<{ url?: string }>;
-    formats?: Array<{
-      url?: string;
-      protocol?: string;
-      format_id?: string;
-    }>;
-  };
+  const urls = stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^https?:\/\//i.test(line));
 
-  // For progressive formats yt-dlp puts the URL on the top-level `url`.
-  // For separated audio/video it'd put a `requested_formats` array, but our
-  // selector forces progressive so that's a fallback for unusual videos.
-  const directUrl =
-    typeof info.url === "string" && info.url.length > 0
-      ? info.url
-      : info.requested_formats?.[0]?.url;
+  const directUrl = urls[0];
 
   if (!directUrl) {
     throw new Error(
@@ -810,31 +797,26 @@ async function doResolveStreamUrl(
     // ignore
   }
 
-  // yt-dlp puts the chosen format's protocol on the top-level when a
-  // single format was selected (our case). Fall back to scanning the
-  // formats array if the structure differs.
-  let protocol: string | undefined;
-  if (typeof (info as { protocol?: unknown }).protocol === "string") {
-    protocol = (info as { protocol: string }).protocol;
-  } else if (info.formats?.length) {
-    const matching = (info.formats as Array<{ url?: string; protocol?: string }>).find(
-      (f) => f.url === directUrl,
-    );
-    protocol = matching?.protocol;
-  }
-
   return {
     url: directUrl,
     type,
-    protocol,
-    title: info.title || undefined,
-    author: info.uploader || info.channel,
-    thumbnail: info.thumbnail,
-    duration: Number.isFinite(Number(info.duration))
-      ? Number(info.duration)
-      : null,
+    protocol: inferStreamProtocol(directUrl),
+    duration: null,
     expiresAt,
   };
+}
+
+function inferStreamProtocol(streamUrl: string): string | undefined {
+  try {
+    const url = new URL(streamUrl);
+    const path = url.pathname.toLowerCase();
+    if (path.endsWith(".m3u8") || path.includes(".m3u8/")) {
+      return "m3u8";
+    }
+  } catch {
+    // ignore malformed URLs; the media element will report playback errors.
+  }
+  return "https";
 }
 
 function createJobId(createdAt: number) {
