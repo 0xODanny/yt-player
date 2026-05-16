@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.17";
+export const APP_RELEASE_VERSION = "1.1.18";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,15 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.18",
+    title: "May 2026",
+    items: [
+      "Streaming: YouTube radio/mix links with “list=” now open the selected video instead of being rejected as playlists.",
+      "Playback: when YouTube only gives us a legacy MP4 for audio, iPhone PWAs use the video pipeline so long mixes are more likely to start.",
+      "PWA install: new installs use a dedicated Pepinho Player app path so iOS is less likely to open another installed Pepinho app from the lock-screen player.",
+    ],
+  },
   {
     version: "1.1.17",
     title: "May 2026",

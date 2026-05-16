@@ -95,6 +95,20 @@ function videoIsInPip(video: HTMLVideoElement | null): boolean {
   return (video as WebKitVideoElement).webkitPresentationMode === "picture-in-picture";
 }
 
+function streamUrlLooksLikeVideo(url: string | undefined): boolean {
+  if (!url) {
+    return false;
+  }
+  try {
+    const parsed = new URL(url);
+    const mime = parsed.searchParams.get("mime") || "";
+    const itag = parsed.searchParams.get("itag") || "";
+    return mime.startsWith("video/") || itag === "18" || itag === "22";
+  } catch {
+    return false;
+  }
+}
+
 async function enterPip(video: HTMLVideoElement): Promise<void> {
   // Prefer WebKit's API on iOS — the standard one will throw or be missing.
   const webkit = video as WebKitVideoElement;
@@ -230,12 +244,15 @@ export function MediaPlayer({
     );
   }, [playable?.id, settings.audioOnlyDefault, playable?.kind, playable?.type]);
 
-  // Audio elements always play with screen off; video elements get
-  // suspended on most platforms when the screen locks. So when source is
-  // a video AND user enabled audioOnly, render an <audio> element instead
-  // of a <video>. iOS Safari and Android Chrome both happily play the
-  // audio track of an mp4 via the <audio> tag.
-  const useAudioElement = !!playable && (playable.type === "audio" || audioOnly);
+  // Audio elements are best for screen-off playback, but YouTube sometimes
+  // gives "audio" requests only a legacy muxed MP4 (itag 18/22). iPhone PWAs
+  // are more reliable when those URLs are played through <video>.
+  const streamAudioUsesVideoFallback =
+    playable?.kind === "stream" &&
+    playable.type === "audio" &&
+    streamUrlLooksLikeVideo(stream?.url);
+  const useAudioElement =
+    !!playable && (playable.type === "audio" || audioOnly) && !streamAudioUsesVideoFallback;
 
   useEffect(() => {
     const el = mediaRef.current;

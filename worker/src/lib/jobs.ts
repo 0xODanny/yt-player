@@ -352,10 +352,6 @@ export function isDirectMediaFileUrl(url: string) {
 export function normalizeMediaSourceUrl(url: string) {
   const parsedUrl = new URL(url);
 
-  if (isPlaylistUrl(parsedUrl)) {
-    throw new MetadataExtractionError("Playlists are not supported.", 400);
-  }
-
   if (
     (parsedUrl.hostname === "www.youtube.com" || parsedUrl.hostname === "youtube.com") &&
     parsedUrl.pathname === "/watch"
@@ -377,6 +373,10 @@ export function normalizeMediaSourceUrl(url: string) {
     }
 
     return `https://www.youtube.com/watch?v=${videoId}`;
+  }
+
+  if (isPlaylistUrl(parsedUrl)) {
+    throw new MetadataExtractionError("Playlists are not supported.", 400);
   }
 
   return parsedUrl.toString();

@@ -1,10 +1,10 @@
 {
-  "id": "/?app=pepinho-player",
+  "id": "/player/",
   "name": "Pepinho Player",
   "short_name": "Pepinho Player",
   "description": "Ad-free music and video player with offline saves.",
-  "start_url": "/?app=pepinho-player&utm_source=pwa",
-  "scope": "/",
+  "start_url": "/player/?utm_source=pwa",
+  "scope": "/player/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#c2d884",

@@ -1,11 +1,12 @@
 /* eslint-disable no-restricted-globals */
 
-const CACHE_VERSION = "yt-local-tool-v1-1-17";
+const CACHE_VERSION = "yt-local-tool-v1-1-18";
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
 const APP_SHELL_URLS = [
   "/",
+  "/player/",
   "/manifest.json",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
