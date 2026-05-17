@@ -824,6 +824,20 @@ export function MediaPlayer({
     setPlaybackRate(next);
     update("preferredPlaybackRate", next as never);
   };
+  const handleCloseClick = () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+      return;
+    }
+    const landscapePlayer = window.matchMedia(
+      "(max-height: 520px) and (orientation: landscape)",
+    ).matches;
+    if (landscapePlayer) {
+      onMinimize();
+      return;
+    }
+    onClose();
+  };
 
   return (
     <>
@@ -870,7 +884,7 @@ export function MediaPlayer({
                   type="button"
                   className="player-close"
                   aria-label="Close player"
-                  onClick={onClose}
+                  onClick={handleCloseClick}
                 >
                   ×
                 </button>

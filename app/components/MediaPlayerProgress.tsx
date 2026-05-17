@@ -356,6 +356,27 @@ export function ExpandedStageControls({
     revealControls();
   };
 
+  useEffect(() => {
+    const landscapeQuery = window.matchMedia(
+      "(max-height: 520px) and (orientation: landscape)",
+    );
+    const tryLandscapeFullscreen = () => {
+      const el = mediaRef.current;
+      if (!el || !landscapeQuery.matches || document.fullscreenElement) {
+        return;
+      }
+      const stage = el.closest(".player-media-stage") as HTMLElement | null;
+      if (stage && typeof stage.requestFullscreen === "function") {
+        void stage.requestFullscreen().catch(() => undefined);
+      }
+    };
+    tryLandscapeFullscreen();
+    landscapeQuery.addEventListener("change", tryLandscapeFullscreen);
+    return () => {
+      landscapeQuery.removeEventListener("change", tryLandscapeFullscreen);
+    };
+  }, [mediaRef, objectUrl, streamUrl, useAudioElement]);
+
   return (
     <div
       className={`player-stage-controls${controlsVisible ? " visible" : ""}`}
@@ -369,7 +390,7 @@ export function ExpandedStageControls({
           aria-label="Full screen"
           onClick={enterFullscreen}
         >
-          Full
+          Full screen
         </button>
         <label className="player-speed-corner" aria-label="Playback speed">
           <span>Speed</span>
