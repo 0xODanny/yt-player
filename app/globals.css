@@ -1327,7 +1327,7 @@ button.footer-share {
 }
 
 .player-dialog {
-  width: min(720px, 100%);
+  width: min(920px, 100%);
   max-height: 90vh;
   background: var(--panel-strong);
   border: 1px solid var(--panel-border);
@@ -1503,9 +1503,19 @@ button.footer-share {
 }
 
 .player-dock-fill {
+  position: relative;
+  z-index: 2;
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+}
+
+.player-dock-buffer {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--accent) 34%, var(--panel-strong) 66%);
 }
 
 .player-dock-range {
@@ -1670,35 +1680,52 @@ body.player-dock-visible .shell {
 
 .player-video {
   width: 100%;
-  max-height: 70vh;
+  max-height: 72vh;
   background: #000;
   border-radius: 12px;
+  display: block;
+  object-fit: contain;
 }
 
 /* YouTube streams: we hide native controls and use our own scrubber so
    Chrome/Safari don’t paint a second “mini video” inside the control bar,
    and so duration/progress stay in sync on mobile PWAs. */
 .player-video.player-video--stream {
-  max-height: min(56vh, 420px);
+  max-height: min(68vh, 620px);
 }
 
 .player-stream-video-shell {
   display: grid;
-  gap: 10px;
+  gap: 6px;
   width: 100%;
+}
+
+.player-media-stage {
+  position: relative;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #000;
+}
+
+.player-media-stage .player-art {
+  width: 100%;
+  max-width: none;
 }
 
 .player-stream-chrome {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
 }
 
 .player-stream-chrome-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
 }
 
 .player-seek-skip {
@@ -1721,33 +1748,11 @@ body.player-dock-visible .shell {
   font-size: 0.72rem;
 }
 
-.player-expanded-seek {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 4px 0 2px;
-}
-
 .player-dock-seek-row {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-}
-
-.player-stream-playpause {
-  flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  border: 1px solid rgba(36, 72, 0, 0.15);
-  background: rgba(247, 244, 224, 0.65);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
 }
 
 .player-stream-time {
@@ -1760,13 +1765,133 @@ body.player-dock-visible .shell {
 
 .player-stream-scrub {
   position: relative;
-  flex: 1 1 140px;
   min-width: 140px;
   height: 18px;
 }
 
 .player-stream-scrub .player-dock-track {
   height: 6px;
+}
+
+.player-stage-controls {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity 180ms ease;
+}
+
+.player-stage-controls.visible {
+  opacity: 1;
+}
+
+.player-stage-controls::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.22), transparent 28%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.18), transparent 35%);
+  pointer-events: none;
+}
+
+.player-center-controls {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(14px, 5vw, 34px);
+}
+
+.player-overlay-skip,
+.player-overlay-playpause {
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(0, 0, 0, 0.28);
+  color: #fff;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+
+.player-overlay-skip {
+  width: clamp(58px, 15vw, 86px);
+  height: clamp(52px, 13vw, 76px);
+  border-radius: 20px;
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  font-size: clamp(1.1rem, 4vw, 1.65rem);
+  font-weight: 800;
+  letter-spacing: -0.08em;
+}
+
+.player-overlay-skip small {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  opacity: 0.86;
+}
+
+.player-overlay-playpause {
+  width: clamp(76px, 18vw, 112px);
+  height: clamp(76px, 18vw, 112px);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+}
+
+.player-overlay-play-glyph {
+  width: 0;
+  height: 0;
+  margin-left: 8%;
+  border-style: solid;
+  border-width: clamp(17px, 4.5vw, 27px) 0 clamp(17px, 4.5vw, 27px) clamp(28px, 7vw, 44px);
+  border-color: transparent transparent transparent #fff;
+}
+
+.player-overlay-pause-glyph {
+  display: flex;
+  gap: clamp(7px, 2vw, 12px);
+}
+
+.player-overlay-pause-glyph::before,
+.player-overlay-pause-glyph::after {
+  content: "";
+  width: clamp(8px, 2vw, 12px);
+  height: clamp(34px, 8vw, 54px);
+  border-radius: 999px;
+  background: #fff;
+}
+
+.player-speed-corner {
+  position: absolute;
+  z-index: 1;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(10px);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.player-speed-corner select {
+  border: 0;
+  border-radius: 999px;
+  padding: 3px 6px;
+  color: #111;
+  background: rgba(255, 255, 255, 0.86);
+  font: inherit;
 }
 
 .player-stream-status {
@@ -1809,12 +1934,12 @@ body.player-dock-visible .shell {
 
 .player-audio-wrap {
   display: grid;
-  gap: 14px;
+  gap: 6px;
   justify-items: center;
 }
 
 .player-art {
-  width: min(280px, 70vw);
+  width: min(520px, 86vw);
   aspect-ratio: 16 / 9;
   object-fit: cover;
   border-radius: 12px;
@@ -1832,7 +1957,52 @@ body.player-dock-visible .shell {
 }
 
 .player-audio {
-  width: 100%;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .player-overlay {
+    padding: 8px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .player-dialog {
+    width: 100%;
+    max-height: 96vh;
+    padding: 10px;
+    border-radius: 16px;
+  }
+
+  .player-header {
+    gap: 8px;
+  }
+
+  .player-toolbar {
+    padding: 6px 0;
+  }
+
+  .player-toolbar-hint {
+    display: none;
+  }
+
+  .player-video,
+  .player-video.player-video--stream {
+    max-height: 72vh;
+  }
+
+  .player-stream-chrome-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .player-stream-time {
+    min-width: 0;
+    font-size: 0.74rem;
+  }
 }
 
 /* ── URL clear button ───────────────────────────────── */

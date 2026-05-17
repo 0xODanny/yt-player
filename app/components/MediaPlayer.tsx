@@ -11,12 +11,11 @@ import { MediaSession } from "@jofr/capacitor-media-session";
 import type { PlaybackLayout } from "@/lib/playback";
 
 import {
+  ExpandedStageControls,
   MinimizedProgressDock,
   seekMediaByDeltaSeconds,
   StreamExpandedProgressChrome,
 } from "./MediaPlayerProgress";
-
-type SleepTimerChoice = "off" | "15" | "30" | "60" | "track";
 
 /**
  * Either a saved library item (plays from OPFS via a blob URL) OR a live
@@ -156,7 +155,6 @@ export function MediaPlayer({
   const [isPip, setIsPip] = useState(false);
   const [pipAvailable, setPipAvailable] = useState<boolean>(false);
   const [playbackRate, setPlaybackRate] = useState(settings.preferredPlaybackRate);
-  const [sleepTimerChoice, setSleepTimerChoice] = useState<SleepTimerChoice>("off");
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLMediaElement | null>(null);
   const bindAudioRef = useCallback((node: HTMLAudioElement | null) => {
@@ -167,7 +165,6 @@ export function MediaPlayer({
   }, []);
   const onLibraryEndedRef = useRef(onLibraryPlaybackEnded);
   const wasPlayingBeforeBackgroundRef = useRef(false);
-  const sleepTimerChoiceRef = useRef<SleepTimerChoice>("off");
   onLibraryEndedRef.current = onLibraryPlaybackEnded;
 
   // Whichever source is set drives the player. `stream` wins if both are
@@ -194,39 +191,13 @@ export function MediaPlayer({
         }
       : null;
 
-  // New source: reset per-session speed to the default and clear sleep timer.
+  // New source: reset per-session speed to the default.
   useEffect(() => {
     if (!playable) {
       return;
     }
     setPlaybackRate(settings.preferredPlaybackRate);
-    setSleepTimerChoice("off");
-    sleepTimerChoiceRef.current = "off";
   }, [playable?.id, settings.preferredPlaybackRate, playable]);
-
-  useEffect(() => {
-    if (sleepTimerChoice !== "15" && sleepTimerChoice !== "30" && sleepTimerChoice !== "60") {
-      return;
-    }
-    const mins = Number(sleepTimerChoice);
-    const deadline = Date.now() + mins * 60_000;
-    const tick = () => {
-      if (Date.now() >= deadline) {
-        const el = mediaRef.current;
-        if (el) {
-          el.pause();
-        }
-        setSleepTimerChoice("off");
-      }
-    };
-    const id = window.setInterval(tick, 1500);
-    tick();
-    return () => window.clearInterval(id);
-  }, [sleepTimerChoice]);
-
-  useEffect(() => {
-    sleepTimerChoiceRef.current = sleepTimerChoice;
-  }, [sleepTimerChoice]);
 
   // On Android APK, library *video* files default to audio-only so we use
   // an <audio> element first — WebView often pauses <video> on blob URLs
@@ -604,10 +575,6 @@ export function MediaPlayer({
       } catch {
         // ignore
       }
-      if (sleepTimerChoiceRef.current === "track") {
-        setSleepTimerChoice("off");
-        return;
-      }
       if (
         playable?.kind === "library" &&
         !repeatOne &&
@@ -852,7 +819,11 @@ export function MediaPlayer({
   const showPipButton = playable.type === "video" && !useAudioElement && pipAvailable;
   const isStreaming = playable.kind === "stream";
   const expanded = layout === "expanded";
-  const showNativeMediaControls = expanded && !isStreaming;
+  const showNativeMediaControls = false;
+  const handlePlaybackRateChange = (next: number) => {
+    setPlaybackRate(next);
+    update("preferredPlaybackRate", next as never);
+  };
 
   return (
     <>
@@ -946,132 +917,83 @@ export function MediaPlayer({
             </span>
           </div>
 
-          {expanded ? (
-            <div
-              className="player-toolbar-controls"
-              role="group"
-              aria-label="Playback options"
-            >
-              <label className="player-toolbar-field">
-                <span className="player-toolbar-field-label">Speed</span>
-                <select
-                  className="player-toolbar-select"
-                  aria-label="Playback speed"
-                  value={String(playbackRate)}
-                  onChange={(event) => {
-                    const next = Number(event.target.value);
-                    setPlaybackRate(next);
-                    update("preferredPlaybackRate", next as never);
-                  }}
-                >
-                  <option value="0.75">0.75×</option>
-                  <option value="1">1×</option>
-                  <option value="1.25">1.25×</option>
-                  <option value="1.5">1.5×</option>
-                  <option value="1.75">1.75×</option>
-                  <option value="2">2×</option>
-                </select>
-              </label>
-              <label className="player-toolbar-field">
-                <span className="player-toolbar-field-label">Sleep</span>
-                <select
-                  className="player-toolbar-select"
-                  aria-label="Sleep timer"
-                  value={sleepTimerChoice}
-                  onChange={(event) =>
-                    setSleepTimerChoice(event.target.value as SleepTimerChoice)
-                  }
-                >
-                  <option value="off">Off</option>
-                  <option value="15">In 15 min</option>
-                  <option value="30">In 30 min</option>
-                  <option value="60">In 60 min</option>
-                  <option value="track">After this track</option>
-                </select>
-              </label>
-            </div>
-          ) : null}
-
-          {expanded && !loading && !error && objectUrl && !isStreaming ? (
-            <div className="player-expanded-seek" role="group" aria-label="Seek">
-              <button
-                type="button"
-                className="player-seek-skip"
-                aria-label={`Back ${settings.skipSeconds} seconds`}
-                title={`−${settings.skipSeconds}s`}
-                onClick={() =>
-                  seekMediaByDeltaSeconds(mediaRef.current, -settings.skipSeconds)
-                }
-              >
-                −{settings.skipSeconds}s
-              </button>
-              <button
-                type="button"
-                className="player-seek-skip"
-                aria-label={`Forward ${settings.skipSeconds} seconds`}
-                title={`+${settings.skipSeconds}s`}
-                onClick={() =>
-                  seekMediaByDeltaSeconds(mediaRef.current, settings.skipSeconds)
-                }
-              >
-                +{settings.skipSeconds}s
-              </button>
-            </div>
-          ) : null}
-
           <div className="player-body">
             {loading ? <p className="player-status">Loading…</p> : null}
             {error ? <p className="player-status player-error">{error}</p> : null}
             {!loading && !error && objectUrl ? (
               useAudioElement ? (
                 <div className="player-audio-wrap">
-                  {playable.thumbnail ? (
-                    <img className="player-art" src={playable.thumbnail} alt="" />
-                  ) : (
-                    <div className="player-art player-art-fallback" aria-hidden>
-                      {playable.format.toUpperCase()}
-                    </div>
-                  )}
-                  <audio
-                    key={`${objectUrl}-audio`}
-                    ref={bindAudioRef}
-                    className={`player-audio${isStreaming ? " player-audio--stream" : ""}`}
-                    src={objectUrl}
-                    controls={showNativeMediaControls}
-                    autoPlay
-                    preload="auto"
-                    loop={repeatOne}
-                  />
-                  {expanded && isStreaming ? (
+                  <div className="player-media-stage">
+                    {playable.thumbnail ? (
+                      <img className="player-art" src={playable.thumbnail} alt="" />
+                    ) : (
+                      <div className="player-art player-art-fallback" aria-hidden>
+                        {playable.format.toUpperCase()}
+                      </div>
+                    )}
+                    <audio
+                      key={`${objectUrl}-audio`}
+                      ref={bindAudioRef}
+                      className={`player-audio${isStreaming ? " player-audio--stream" : ""}`}
+                      src={objectUrl}
+                      controls={showNativeMediaControls}
+                      autoPlay
+                      preload="auto"
+                      loop={repeatOne}
+                    />
+                    {expanded ? (
+                      <ExpandedStageControls
+                        mediaRef={mediaRef}
+                        objectUrl={objectUrl}
+                        streamUrl={stream?.url ?? ""}
+                        useAudioElement={useAudioElement}
+                        skipSeconds={settings.skipSeconds}
+                        playbackRate={playbackRate}
+                        onPlaybackRateChange={handlePlaybackRateChange}
+                      />
+                    ) : null}
+                  </div>
+                  {expanded ? (
                     <StreamExpandedProgressChrome
                       mediaRef={mediaRef}
                       objectUrl={objectUrl}
                       streamUrl={stream?.url ?? ""}
                       useAudioElement={useAudioElement}
-                      skipSeconds={settings.skipSeconds}
                     />
                   ) : null}
                 </div>
               ) : (
-                <div className={isStreaming ? "player-stream-video-shell" : undefined}>
-                  <video
-                    key={`${objectUrl}-video`}
-                    ref={bindVideoRef}
-                    className={`player-video${isStreaming ? " player-video--stream" : ""}`}
-                    src={objectUrl}
-                    controls={showNativeMediaControls}
-                    autoPlay
-                    playsInline
-                    preload="auto"
-                    loop={repeatOne}
-                  />
-                  {expanded && isStreaming ? (
+                <div className="player-stream-video-shell">
+                  <div className="player-media-stage">
+                    <video
+                      key={`${objectUrl}-video`}
+                      ref={bindVideoRef}
+                      className={`player-video${isStreaming ? " player-video--stream" : ""}`}
+                      src={objectUrl}
+                      controls={showNativeMediaControls}
+                      autoPlay
+                      playsInline
+                      preload="auto"
+                      loop={repeatOne}
+                    />
+                    {expanded ? (
+                      <ExpandedStageControls
+                        mediaRef={mediaRef}
+                        objectUrl={objectUrl}
+                        streamUrl={stream?.url ?? ""}
+                        useAudioElement={useAudioElement}
+                        skipSeconds={settings.skipSeconds}
+                        playbackRate={playbackRate}
+                        onPlaybackRateChange={handlePlaybackRateChange}
+                      />
+                    ) : null}
+                  </div>
+                  {expanded ? (
                     <StreamExpandedProgressChrome
                       mediaRef={mediaRef}
                       objectUrl={objectUrl}
                       streamUrl={stream?.url ?? ""}
                       useAudioElement={useAudioElement}
-                      skipSeconds={settings.skipSeconds}
                     />
                   ) : null}
                 </div>

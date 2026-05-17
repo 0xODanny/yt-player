@@ -275,15 +275,127 @@ type StreamExpandedProgressChromeProps = {
   objectUrl: string;
   streamUrl: string;
   useAudioElement: boolean;
-  skipSeconds: number;
 };
+
+type ExpandedStageControlsProps = StreamExpandedProgressChromeProps & {
+  skipSeconds: number;
+  playbackRate: number;
+  onPlaybackRateChange: (rate: number) => void;
+};
+
+export function ExpandedStageControls({
+  mediaRef,
+  objectUrl,
+  streamUrl,
+  useAudioElement,
+  skipSeconds,
+  playbackRate,
+  onPlaybackRateChange,
+}: ExpandedStageControlsProps) {
+  const syncKey = `${objectUrl}|${streamUrl}|${useAudioElement ? "a" : "v"}`;
+  const dockProgress = usePlaybackProgressSync(mediaRef, syncKey);
+  const [controlsVisible, setControlsVisible] = useState(true);
+
+  const revealControls = () => {
+    setControlsVisible(true);
+  };
+
+  useEffect(() => {
+    if (!controlsVisible) {
+      return;
+    }
+    const id = window.setTimeout(() => {
+      setControlsVisible(false);
+    }, 5000);
+    return () => window.clearTimeout(id);
+  }, [controlsVisible]);
+
+  const togglePlay = () => {
+    const el = mediaRef.current;
+    if (!el) {
+      return;
+    }
+    if (el.paused) {
+      void el.play();
+    } else {
+      el.pause();
+    }
+    revealControls();
+  };
+
+  return (
+    <div
+      className={`player-stage-controls${controlsVisible ? " visible" : ""}`}
+      onPointerDown={revealControls}
+      onPointerMove={revealControls}
+    >
+      <label className="player-speed-corner" aria-label="Playback speed">
+        <span>Speed</span>
+        <select
+          value={String(playbackRate)}
+          onChange={(event) => {
+            const next = Number(event.target.value);
+            if (Number.isFinite(next)) {
+              onPlaybackRateChange(next);
+            }
+            revealControls();
+          }}
+        >
+          <option value="0.75">0.75x</option>
+          <option value="1">1x</option>
+          <option value="1.25">1.25x</option>
+          <option value="1.5">1.5x</option>
+          <option value="1.75">1.75x</option>
+          <option value="2">2x</option>
+        </select>
+      </label>
+      <div className="player-center-controls" role="group" aria-label="Playback controls">
+        <button
+          type="button"
+          className="player-overlay-skip"
+          aria-label={`Back ${skipSeconds} seconds`}
+          onClick={() => {
+            seekMediaByDeltaSeconds(mediaRef.current, -skipSeconds);
+            revealControls();
+          }}
+        >
+          <span aria-hidden>&lt;&lt;</span>
+          <small>{skipSeconds}s</small>
+        </button>
+        <button
+          type="button"
+          className="player-overlay-playpause"
+          aria-label={dockProgress.paused ? "Play" : "Pause"}
+          onClick={togglePlay}
+        >
+          {dockProgress.paused ? (
+            <span className="player-overlay-play-glyph" aria-hidden />
+          ) : (
+            <span className="player-overlay-pause-glyph" aria-hidden />
+          )}
+        </button>
+        <button
+          type="button"
+          className="player-overlay-skip"
+          aria-label={`Forward ${skipSeconds} seconds`}
+          onClick={() => {
+            seekMediaByDeltaSeconds(mediaRef.current, skipSeconds);
+            revealControls();
+          }}
+        >
+          <span aria-hidden>&gt;&gt;</span>
+          <small>{skipSeconds}s</small>
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function StreamExpandedProgressChrome({
   mediaRef,
   objectUrl,
   streamUrl,
   useAudioElement,
-  skipSeconds,
 }: StreamExpandedProgressChromeProps) {
   const syncKey = `${objectUrl}|${streamUrl}|${useAudioElement ? "a" : "v"}`;
   const dockProgress = usePlaybackProgressSync(mediaRef, syncKey);
@@ -298,6 +410,12 @@ export function StreamExpandedProgressChrome({
       : scrubMax > 0.001
         ? Math.min(100, (cur / scrubMax) * 100)
         : 0;
+  const bufferedPct =
+    dur > 0
+      ? Math.min(100, (buf / dur) * 100)
+      : scrubMax > 0.001
+        ? Math.min(100, (buf / scrubMax) * 100)
+        : 0;
 
   return (
     <div className="player-stream-chrome">
@@ -307,46 +425,6 @@ export function StreamExpandedProgressChrome({
         </p>
       ) : null}
       <div className="player-stream-chrome-row">
-        <button
-          type="button"
-          className="player-seek-skip"
-          aria-label={`Back ${skipSeconds} seconds`}
-          title={`−${skipSeconds}s`}
-          onClick={() => seekMediaByDeltaSeconds(mediaRef.current, -skipSeconds)}
-        >
-          −{skipSeconds}s
-        </button>
-        <button
-          type="button"
-          className="player-stream-playpause"
-          aria-label={dockProgress.paused ? "Play" : "Pause"}
-          onClick={() => {
-            const el = mediaRef.current;
-            if (!el) {
-              return;
-            }
-            if (el.paused) {
-              void el.play();
-            } else {
-              el.pause();
-            }
-          }}
-        >
-          {dockProgress.paused ? (
-            <span className="player-dock-play-glyph" aria-hidden />
-          ) : (
-            <span className="player-dock-pause-glyph" aria-hidden />
-          )}
-        </button>
-        <button
-          type="button"
-          className="player-seek-skip"
-          aria-label={`Forward ${skipSeconds} seconds`}
-          title={`+${skipSeconds}s`}
-          onClick={() => seekMediaByDeltaSeconds(mediaRef.current, skipSeconds)}
-        >
-          +{skipSeconds}s
-        </button>
         <span className="player-stream-time">
           {formatMediaClock(cur)} /{" "}
           {dur > 0 ? formatMediaClock(dur) : buf > 0 ? formatMediaClock(buf) : "--:--"}
@@ -356,6 +434,7 @@ export function StreamExpandedProgressChrome({
             className={`player-dock-track${dockProgress.waiting && dur <= 0 ? " player-dock-track--busy" : ""}`}
             aria-hidden
           >
+            <div className="player-dock-buffer" style={{ width: `${bufferedPct}%` }} />
             <div className="player-dock-fill" style={{ width: `${pct}%` }} />
           </div>
           <input
@@ -420,6 +499,12 @@ export function MinimizedProgressDock({
       : scrubMax > 0.001
         ? Math.min(100, (cur / scrubMax) * 100)
         : 0;
+  const bufferedPct =
+    dur > 0
+      ? Math.min(100, (buf / dur) * 100)
+      : scrubMax > 0.001
+        ? Math.min(100, (buf / scrubMax) * 100)
+        : 0;
 
   return (
     <div className="player-dock" role="region" aria-label={`Now playing: ${title}`}>
@@ -459,6 +544,7 @@ export function MinimizedProgressDock({
             className={`player-dock-track${dockProgress.waiting && dur <= 0 ? " player-dock-track--busy" : ""}`}
             aria-hidden
           >
+            <div className="player-dock-buffer" style={{ width: `${bufferedPct}%` }} />
             <div className="player-dock-fill" style={{ width: `${pct}%` }} />
           </div>
           <input

@@ -4,7 +4,7 @@
  *
  * Fallback when `NEXT_PUBLIC_APP_RELEASE_VERSION` is not set at build time.
  */
-export const APP_RELEASE_VERSION = "1.1.18";
+export const APP_RELEASE_VERSION = "1.1.19";
 
 export function getDisplayedReleaseVersion(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_APP_RELEASE_VERSION) {
@@ -42,6 +42,15 @@ export type ReleaseNoteEntry = {
 };
 
 export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
+  {
+    version: "1.1.19",
+    title: "May 2026",
+    items: [
+      "Player: expanded playback now has tap-to-show transparent controls over the media, with large Play/Pause plus back/forward buttons that auto-hide after 5 seconds.",
+      "Player: speed moved into the media corner, Sleep was removed from the expanded controls, and the progress bar now shows buffered media behind the play position.",
+      "Mobile/APK: the video stage is wider and uses more of the screen while keeping the progress bar below the media.",
+    ],
+  },
   {
     version: "1.1.18",
     title: "May 2026",
