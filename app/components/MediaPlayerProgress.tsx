@@ -283,6 +283,10 @@ type ExpandedStageControlsProps = StreamExpandedProgressChromeProps & {
   onPlaybackRateChange: (rate: number) => void;
 };
 
+type WebKitFullscreenVideoElement = HTMLVideoElement & {
+  webkitEnterFullscreen?: () => void;
+};
+
 export function ExpandedStageControls({
   mediaRef,
   objectUrl,
@@ -323,32 +327,71 @@ export function ExpandedStageControls({
     revealControls();
   };
 
+  const enterFullscreen = () => {
+    const el = mediaRef.current;
+    if (!el) {
+      return;
+    }
+    const stage = el.closest(".player-media-stage") as HTMLElement | null;
+    const target = stage ?? el;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+      revealControls();
+      return;
+    }
+    if (typeof target.requestFullscreen === "function") {
+      void target.requestFullscreen().catch(() => {
+        const video = el as WebKitFullscreenVideoElement;
+        if (typeof video.webkitEnterFullscreen === "function") {
+          video.webkitEnterFullscreen();
+        }
+      });
+      revealControls();
+      return;
+    }
+    const video = el as WebKitFullscreenVideoElement;
+    if (typeof video.webkitEnterFullscreen === "function") {
+      video.webkitEnterFullscreen();
+    }
+    revealControls();
+  };
+
   return (
     <div
       className={`player-stage-controls${controlsVisible ? " visible" : ""}`}
       onPointerDown={revealControls}
       onPointerMove={revealControls}
     >
-      <label className="player-speed-corner" aria-label="Playback speed">
-        <span>Speed</span>
-        <select
-          value={String(playbackRate)}
-          onChange={(event) => {
-            const next = Number(event.target.value);
-            if (Number.isFinite(next)) {
-              onPlaybackRateChange(next);
-            }
-            revealControls();
-          }}
+      <div className="player-corner-controls">
+        <button
+          type="button"
+          className="player-fullscreen-corner"
+          aria-label="Full screen"
+          onClick={enterFullscreen}
         >
-          <option value="0.75">0.75x</option>
-          <option value="1">1x</option>
-          <option value="1.25">1.25x</option>
-          <option value="1.5">1.5x</option>
-          <option value="1.75">1.75x</option>
-          <option value="2">2x</option>
-        </select>
-      </label>
+          Full
+        </button>
+        <label className="player-speed-corner" aria-label="Playback speed">
+          <span>Speed</span>
+          <select
+            value={String(playbackRate)}
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              if (Number.isFinite(next)) {
+                onPlaybackRateChange(next);
+              }
+              revealControls();
+            }}
+          >
+            <option value="0.75">0.75x</option>
+            <option value="1">1x</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+            <option value="1.75">1.75x</option>
+            <option value="2">2x</option>
+          </select>
+        </label>
+      </div>
       <div className="player-center-controls" role="group" aria-label="Playback controls">
         <button
           type="button"

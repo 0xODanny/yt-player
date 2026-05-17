@@ -47,8 +47,8 @@ export const RELEASE_NOTES: readonly ReleaseNoteEntry[] = [
     title: "May 2026",
     items: [
       "Player: expanded playback now has tap-to-show transparent controls over the media, with large Play/Pause plus back/forward buttons that auto-hide after 5 seconds.",
-      "Player: speed moved into the media corner, Sleep was removed from the expanded controls, and the progress bar now shows buffered media behind the play position.",
-      "Mobile/APK: the video stage is wider and uses more of the screen while keeping the progress bar below the media.",
+      "Player: speed and full-screen controls moved into the media corner, Sleep was removed from expanded controls, and the progress bar now shows buffered media behind the play position.",
+      "Mobile/APK: the video stage is wider and uses more of the screen; landscape phones switch to a full-viewport player so the video and progress bar do not get cut off.",
     ],
   },
   {

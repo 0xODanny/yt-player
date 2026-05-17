@@ -1867,11 +1867,19 @@ body.player-dock-visible .shell {
   background: #fff;
 }
 
-.player-speed-corner {
+.player-corner-controls {
   position: absolute;
   z-index: 1;
   top: 12px;
   right: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.player-fullscreen-corner,
+.player-speed-corner {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1883,6 +1891,10 @@ body.player-dock-visible .shell {
   backdrop-filter: blur(10px);
   font-size: 0.72rem;
   font-weight: 700;
+}
+
+.player-fullscreen-corner {
+  cursor: pointer;
 }
 
 .player-speed-corner select {
@@ -2002,6 +2014,115 @@ body.player-dock-visible .shell {
   .player-stream-time {
     min-width: 0;
     font-size: 0.74rem;
+  }
+}
+
+@media (max-height: 520px) and (orientation: landscape) {
+  .player-overlay {
+    padding: 0;
+    background: #000;
+    backdrop-filter: none;
+  }
+
+  .player-dialog {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    padding: 8px calc(8px + env(safe-area-inset-right)) 8px calc(8px + env(safe-area-inset-left));
+    gap: 6px;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    box-shadow: none;
+  }
+
+  .player-header {
+    align-items: center;
+  }
+
+  .player-titles h2 {
+    font-size: 0.88rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .player-sub,
+  .player-stream-tag,
+  .player-toolbar-hint {
+    display: none;
+  }
+
+  .player-minimize,
+  .player-close {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+  }
+
+  .player-toolbar {
+    padding: 0;
+    gap: 8px;
+    border: 0;
+  }
+
+  .player-mode {
+    padding: 5px 10px;
+    font-size: 0.76rem;
+  }
+
+  .player-body,
+  .player-stream-video-shell,
+  .player-audio-wrap {
+    min-height: 0;
+  }
+
+  .player-stream-video-shell,
+  .player-audio-wrap {
+    height: 100%;
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-content: stretch;
+  }
+
+  .player-media-stage {
+    min-height: 0;
+    height: 100%;
+  }
+
+  .player-video,
+  .player-video.player-video--stream,
+  .player-art {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-radius: 10px;
+    object-fit: contain;
+  }
+
+  .player-stream-chrome {
+    gap: 2px;
+  }
+
+  .player-stream-chrome-row {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .player-stream-scrub {
+    height: 14px;
+  }
+
+  .player-corner-controls {
+    top: 8px;
+    right: 8px;
+    gap: 6px;
+  }
+
+  .player-fullscreen-corner,
+  .player-speed-corner {
+    padding: 5px 7px;
   }
 }
 
